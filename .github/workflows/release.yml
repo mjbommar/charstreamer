@@ -9,7 +9,8 @@ on:
         type: string
       model_artifact_url:
         description: "URL to a validated charstreamer-default model .zip"
-        required: true
+        required: false
+        default: ""
         type: string
 
 permissions:
@@ -46,7 +47,7 @@ jobs:
           echo "version=$version" >> "$GITHUB_OUTPUT"
 
       - name: Install system dependencies
-        run: sudo apt-get update && sudo apt-get install -y libopenblas-dev pkg-config
+        run: sudo apt-get update && sudo apt-get install -y libopenblas-dev patchelf pkg-config
 
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable
@@ -59,6 +60,9 @@ jobs:
           MODEL_ARTIFACT_URL: ${{ inputs.model_artifact_url }}
         run: |
           mkdir -p dist/models
+          if [[ -z "$MODEL_ARTIFACT_URL" ]]; then
+            MODEL_ARTIFACT_URL="https://github.com/${GITHUB_REPOSITORY}/releases/download/${{ steps.release.outputs.tag }}/charstreamer-default-${{ steps.release.outputs.version }}.zip"
+          fi
           curl -fsSL "$MODEL_ARTIFACT_URL" -o "dist/models/charstreamer-default-${{ steps.release.outputs.version }}.zip"
           python3 tools/model-artifacts/vendor_model.py \
             --require-burn \
@@ -69,7 +73,7 @@ jobs:
         run: uvx maturin build --release --manifest-path crates/charstreamer-python/Cargo.toml --out dist
 
       - name: Check wheel metadata
-        run: uvx twine check dist/*
+        run: uvx twine check dist/*.whl
 
       - name: Check wheel contains usable model
         run: python3 tools/model-artifacts/check_wheel_model.py --require-burn dist/*.whl
@@ -107,7 +111,11 @@ jobs:
           if compgen -G "dist/models/*.zip" > /dev/null; then
             assets+=(dist/models/*.zip)
           fi
-          gh release create "$RELEASE_TAG" "${assets[@]}" \
-            --target "$GITHUB_SHA" \
-            --title "CharStreamer ${RELEASE_TAG}" \
-            --notes-file CHANGELOG.md
+          if gh release view "$RELEASE_TAG" >/dev/null 2>&1; then
+            gh release upload "$RELEASE_TAG" "${assets[@]}" --clobber
+          else
+            gh release create "$RELEASE_TAG" "${assets[@]}" \
+              --target "$GITHUB_SHA" \
+              --title "CharStreamer ${RELEASE_TAG}" \
+              --notes-file CHANGELOG.md
+          fi

@@ -29,6 +29,7 @@ __version__ = _native.__version__
 
 _MODEL_FORMAT = "charstreamer.model-bundle.v1"
 _MODEL_NAME = "charstreamer-default"
+_SUPPORTED_MODEL_ENGINES = {"burn_shallow_mlp_sentence_v1"}
 _MODEL_ARCHIVE = f"{_MODEL_NAME}-{__version__}.zip"
 _GITHUB_RELEASE_BASE = "https://github.com/mjbommar/charstreamer/releases/download"
 _DEFAULT_MODEL_URL = f"{_GITHUB_RELEASE_BASE}/v{__version__}/{_MODEL_ARCHIVE}"
@@ -45,14 +46,15 @@ class ModelResolution:
     error: str | None = None
 
     def to_dict(self) -> dict[str, Any]:
+        model_inference = _model_runtime_available(self)
         return {
             "resolved": self.resolved,
             "source": self.source,
             "path": self.path,
             "manifest": self.manifest,
             "error": self.error,
-            "runtime": "native_heuristic",
-            "model_inference": False,
+            "runtime": _runtime_name(self),
+            "model_inference": model_inference,
         }
 
 
@@ -60,10 +62,9 @@ class Segmenter:
     """High-level segmenter facade.
 
     ``default()`` resolves the configured model artifact before constructing the
-    Rust segmenter. Until Burn model inference is wired into the production
-    path, resolved model metadata is reported but inference remains the native
-    heuristic fallback. ``require_model=True`` makes that explicit by failing
-    when no usable model-backed runtime is available.
+    Rust segmenter. A supported Burn bundle is loaded into the native runtime;
+    otherwise the facade falls back to the native heuristic implementation unless
+    ``require_model=True`` is passed.
     """
 
     def __init__(
@@ -74,7 +75,12 @@ class Segmenter:
         require_model: bool = False,
     ) -> None:
         self._model = model or _resolve_default_model(allow_download=False)
-        if require_model and not _model_runtime_available(self._model):
+        if _model_runtime_available(self._model):
+            if self._model.path is None:
+                raise RuntimeError("resolved model is missing a local path")
+            self._inner = _native.Segmenter.from_model_dir(self._model.path, config)
+            return
+        if require_model:
             raise RuntimeError(_missing_model_runtime_message(self._model))
         self._inner = _native.Segmenter(config)
 
@@ -147,7 +153,13 @@ def model_info(
 def _model_runtime_available(resolution: ModelResolution) -> bool:
     if not resolution.resolved or not resolution.manifest:
         return False
-    return resolution.manifest.get("engine") in {"native_heuristic"}
+    return resolution.manifest.get("engine") in _SUPPORTED_MODEL_ENGINES
+
+
+def _runtime_name(resolution: ModelResolution) -> str:
+    if _model_runtime_available(resolution):
+        return "burn_sentence_boundary"
+    return "native_heuristic"
 
 
 def _missing_model_runtime_message(resolution: ModelResolution) -> str:
@@ -160,7 +172,7 @@ def _missing_model_runtime_message(resolution: ModelResolution) -> str:
     engine = resolution.manifest.get("engine") if resolution.manifest else None
     return (
         f"resolved model artifact uses engine {engine!r}, but this build does "
-        "not yet expose model-backed inference for that engine"
+        "not expose model-backed inference for that engine"
     )
 
 

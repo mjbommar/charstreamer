@@ -9,7 +9,7 @@ homepage.workspace = true
 description = "Reusable byte, Unicode, scanning, and feature kernels for CharStreamer"
 
 [dependencies]
-charstreamer-core = { path = "../charstreamer-core", version = "0.1.0" }
+charstreamer-core = { path = "../charstreamer-core", version = "0.1.1" }
 icu.workspace = true
 memchr.workspace = true
 serde.workspace = true

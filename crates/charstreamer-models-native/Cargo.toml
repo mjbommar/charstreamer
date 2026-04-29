@@ -9,7 +9,7 @@ homepage.workspace = true
 description = "Native CPU model training and inference primitives for CharStreamer"
 
 [dependencies]
-charstreamer-core = { path = "../charstreamer-core", version = "0.1.0" }
+charstreamer-core = { path = "../charstreamer-core", version = "0.1.1" }
 rand.workspace = true
 serde.workspace = true
 serde_json.workspace = true

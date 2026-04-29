@@ -1,4 +1,19 @@
+use charstreamer_backend_burn::{BurnModelIoError, BurnShallowMlpModel};
+use charstreamer_core::{
+    BatchPredictor, BytePos, ByteWindowSpec, CandidateBuffer, FeatureKernel, FeatureMatrix,
+    FeatureScratch, TextBytes,
+};
+use charstreamer_kernels::{
+    AsciiClassAppender, BoundaryShapeAppender, ByteClass, CompositeFeatureKernel,
+    DirectionalByteClassCountAppender, DirectionalUnicodeCategoryGroupCountAppender,
+    EncodedByteWindowAppender, LegalBoundaryHeuristicAppender, LineByteCountAppender,
+    UnicodeCategoryGroup,
+};
 use serde::{Deserialize, Serialize};
+use std::collections::BTreeMap;
+use std::fmt::{Display, Formatter};
+use std::fs;
+use std::path::{Path, PathBuf};
 
 /// Semantic label emitted by the default combined segmenter.
 #[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd, Serialize, Deserialize)]
@@ -229,6 +244,372 @@ impl CombinedSegmenter {
     }
 }
 
+const MODEL_FORMAT: &str = "charstreamer.model-bundle.v1";
+const MODEL_NAME: &str = "charstreamer-default";
+const BURN_SENTENCE_ENGINE: &str = "burn_shallow_mlp_sentence_v1";
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct BurnSentenceFeatureConfig {
+    pub encoded_left: usize,
+    pub encoded_right: usize,
+    pub count_radius: usize,
+    pub feature_dim: usize,
+    pub hidden_dim: usize,
+}
+
+impl Default for BurnSentenceFeatureConfig {
+    fn default() -> Self {
+        Self {
+            encoded_left: 7,
+            encoded_right: 7,
+            count_radius: 24,
+            feature_dim: 0,
+            hidden_dim: 64,
+        }
+    }
+}
+
+#[derive(Clone, Debug, Deserialize)]
+struct ModelBundleManifest {
+    format: String,
+    name: String,
+    engine: String,
+    #[serde(default)]
+    features: BurnSentenceFeatureConfig,
+    #[serde(default)]
+    thresholds: BTreeMap<String, f32>,
+    files: Vec<ModelBundleFile>,
+}
+
+#[derive(Clone, Debug, Deserialize)]
+struct ModelBundleFile {
+    path: String,
+    #[serde(default)]
+    role: Option<String>,
+}
+
+#[derive(Debug)]
+pub struct ModelArtifactError {
+    message: String,
+}
+
+impl ModelArtifactError {
+    #[must_use]
+    pub fn new(message: impl Into<String>) -> Self {
+        Self {
+            message: message.into(),
+        }
+    }
+}
+
+impl Display for ModelArtifactError {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        f.write_str(&self.message)
+    }
+}
+
+impl std::error::Error for ModelArtifactError {}
+
+impl From<std::io::Error> for ModelArtifactError {
+    fn from(error: std::io::Error) -> Self {
+        Self::new(format!("model artifact I/O error: {error}"))
+    }
+}
+
+impl From<serde_json::Error> for ModelArtifactError {
+    fn from(error: serde_json::Error) -> Self {
+        Self::new(format!("model artifact JSON error: {error}"))
+    }
+}
+
+impl From<charstreamer_core::FeatureError> for ModelArtifactError {
+    fn from(error: charstreamer_core::FeatureError) -> Self {
+        Self::new(format!("model feature extraction error: {error}"))
+    }
+}
+
+impl From<charstreamer_core::PredictError> for ModelArtifactError {
+    fn from(error: charstreamer_core::PredictError) -> Self {
+        Self::new(format!("model prediction error: {error}"))
+    }
+}
+
+impl From<BurnModelIoError> for ModelArtifactError {
+    fn from(error: BurnModelIoError) -> Self {
+        Self::new(format!("burn model artifact error: {error}"))
+    }
+}
+
+/// Model-backed segmenter using a Burn sentence boundary model plus the native
+/// structural span detector.
+#[derive(Debug)]
+pub struct BurnSentenceSegmenter {
+    config: SegmenterConfig,
+    model: BurnShallowMlpModel,
+    feature_config: BurnSentenceFeatureConfig,
+    threshold: f32,
+}
+
+impl BurnSentenceSegmenter {
+    pub fn from_dir(
+        path: impl AsRef<Path>,
+        config: SegmenterConfig,
+    ) -> Result<Self, ModelArtifactError> {
+        let root = path.as_ref();
+        let manifest_path = root.join("manifest.json");
+        let manifest: ModelBundleManifest =
+            serde_json::from_slice(&fs::read(&manifest_path).map_err(|error| {
+                ModelArtifactError::new(format!(
+                    "failed to read model manifest `{}`: {error}",
+                    manifest_path.display()
+                ))
+            })?)?;
+        validate_sentence_manifest(&manifest)?;
+
+        let kernel = burn_sentence_kernel(&manifest.features);
+        let expected_dim = kernel.schema().total_dim();
+        if manifest.features.feature_dim != 0 && manifest.features.feature_dim != expected_dim {
+            return Err(ModelArtifactError::new(format!(
+                "model feature_dim {} does not match runtime feature_dim {}",
+                manifest.features.feature_dim, expected_dim
+            )));
+        }
+
+        let model_file = find_sentence_model_file(root, &manifest)?;
+        let model = BurnShallowMlpModel::load_named_mpk(
+            expected_dim,
+            manifest.features.hidden_dim,
+            model_file,
+        )?;
+        let threshold = *manifest.thresholds.get("sentence.end").unwrap_or(&0.5);
+
+        Ok(Self {
+            config,
+            model,
+            feature_config: BurnSentenceFeatureConfig {
+                feature_dim: expected_dim,
+                ..manifest.features
+            },
+            threshold,
+        })
+    }
+
+    pub fn annotate(&self, text: &str) -> Result<Annotation, ModelArtifactError> {
+        let spans = self.spans(text)?;
+        let tagged = render_spans(text, &spans);
+        Ok(Annotation { spans, tagged })
+    }
+
+    pub fn spans(&self, text: &str) -> Result<Vec<AnnotationSpan>, ModelArtifactError> {
+        let mut fallback_config = self.config.clone();
+        fallback_config.include_sentences = false;
+        let mut spans = CombinedSegmenter::new(fallback_config).spans(text);
+
+        if self.config.include_sentences {
+            let suppress = if self.config.suppress_sentences_in_structural_spans {
+                spans
+                    .iter()
+                    .filter(|span| {
+                        matches!(
+                            span.label,
+                            Label::Metadata | Label::Section | Label::ListItem
+                        )
+                    })
+                    .cloned()
+                    .collect::<Vec<_>>()
+            } else {
+                Vec::new()
+            };
+            spans.extend(self.sentence_spans(text, &suppress)?);
+        }
+
+        Ok(normalize_spans(text, spans, self.config.min_span_bytes))
+    }
+
+    fn sentence_spans(
+        &self,
+        text: &str,
+        suppress: &[AnnotationSpan],
+    ) -> Result<Vec<AnnotationSpan>, ModelArtifactError> {
+        let candidates = sentence_boundary_candidates(text);
+        if candidates.is_empty() {
+            return Ok(Vec::new());
+        }
+
+        let kernel = burn_sentence_kernel(&self.feature_config);
+        let mut candidate_buffer = CandidateBuffer::new();
+        for candidate in &candidates {
+            candidate_buffer.push(BytePos::from_usize(candidate.feature_pos));
+        }
+
+        let mut features = FeatureMatrix::<f32>::default();
+        features.resize_zeroed(candidate_buffer.len(), kernel.schema().total_dim());
+        kernel.extract_into(
+            TextBytes::from_utf8(text),
+            candidate_buffer.as_slice(),
+            features.as_view_mut(),
+            &mut FeatureScratch::default(),
+        )?;
+
+        let mut scores = vec![0.0_f32; candidate_buffer.len()];
+        self.model.predict_into(features.as_view(), &mut scores)?;
+
+        let mut spans = Vec::new();
+        let mut cursor = next_allowed_nonspace(text, 0, suppress);
+        for (candidate, score) in candidates.iter().zip(scores.iter().copied()) {
+            if score < self.threshold {
+                continue;
+            }
+            let Some(start) = cursor else {
+                break;
+            };
+            if candidate.break_end <= start {
+                continue;
+            }
+            if let Some(overlap) = first_overlapping_span(start, candidate.break_end, suppress) {
+                if overlap.start > start
+                    && let Some(end) = previous_nonspace_end(text, start, overlap.start)
+                    && end > start
+                {
+                    spans.push(AnnotationSpan::new(Label::Sentence, start, end, 1.0));
+                }
+                cursor = next_allowed_nonspace(text, overlap.end, suppress);
+                continue;
+            }
+            spans.push(AnnotationSpan::new(
+                Label::Sentence,
+                start,
+                candidate.break_end,
+                score,
+            ));
+            cursor = next_allowed_nonspace(text, candidate.break_end, suppress);
+        }
+
+        if let Some(start) = cursor
+            && start < text.len()
+            && !overlaps_any(start, text.len(), suppress)
+        {
+            spans.push(AnnotationSpan::new(Label::Sentence, start, text.len(), 1.0));
+        }
+
+        Ok(spans)
+    }
+}
+
+fn validate_sentence_manifest(manifest: &ModelBundleManifest) -> Result<(), ModelArtifactError> {
+    if manifest.format != MODEL_FORMAT {
+        return Err(ModelArtifactError::new(format!(
+            "unsupported model format `{}`",
+            manifest.format
+        )));
+    }
+    if manifest.name != MODEL_NAME {
+        return Err(ModelArtifactError::new(format!(
+            "unsupported model name `{}`",
+            manifest.name
+        )));
+    }
+    if manifest.engine != BURN_SENTENCE_ENGINE {
+        return Err(ModelArtifactError::new(format!(
+            "unsupported model engine `{}`",
+            manifest.engine
+        )));
+    }
+    if manifest.features.hidden_dim == 0 {
+        return Err(ModelArtifactError::new(
+            "model manifest requires positive features.hidden_dim",
+        ));
+    }
+    if manifest.files.is_empty() {
+        return Err(ModelArtifactError::new(
+            "model manifest requires at least one payload file",
+        ));
+    }
+    Ok(())
+}
+
+fn find_sentence_model_file(
+    root: &Path,
+    manifest: &ModelBundleManifest,
+) -> Result<PathBuf, ModelArtifactError> {
+    let file = manifest
+        .files
+        .iter()
+        .find(|file| file.role.as_deref() == Some("sentence_boundary"))
+        .or_else(|| {
+            manifest
+                .files
+                .iter()
+                .find(|file| file.path.ends_with(".mpk"))
+        })
+        .ok_or_else(|| {
+            ModelArtifactError::new(
+                "model manifest does not include a sentence boundary `.mpk` payload",
+            )
+        })?;
+    let path = Path::new(&file.path);
+    if path.is_absolute()
+        || path
+            .components()
+            .any(|component| matches!(component, std::path::Component::ParentDir))
+    {
+        return Err(ModelArtifactError::new(format!(
+            "unsafe model payload path `{}`",
+            file.path
+        )));
+    }
+    let path = root.join(path);
+    if !path.is_file() {
+        return Err(ModelArtifactError::new(format!(
+            "model payload is missing: {}",
+            path.display()
+        )));
+    }
+    Ok(path)
+}
+
+pub fn burn_sentence_kernel(config: &BurnSentenceFeatureConfig) -> CompositeFeatureKernel {
+    CompositeFeatureKernel::new(vec![
+        Box::new(EncodedByteWindowAppender::new(ByteWindowSpec::new(
+            config.encoded_left,
+            config.encoded_right,
+        ))),
+        Box::new(AsciiClassAppender::new()),
+        Box::new(LegalBoundaryHeuristicAppender::new()),
+        Box::new(BoundaryShapeAppender::new()),
+        Box::new(DirectionalByteClassCountAppender::new(
+            "directional_byte_class_counts",
+            ByteWindowSpec::new(config.count_radius, config.count_radius),
+            vec![
+                ByteClass::AsciiUpper,
+                ByteClass::AsciiLower,
+                ByteClass::AsciiDigit,
+                ByteClass::AsciiWhitespace,
+                ByteClass::AsciiPunctuation,
+                ByteClass::LineBreak,
+                ByteClass::OpenBracket,
+                ByteClass::CloseBracket,
+            ],
+        )),
+        Box::new(DirectionalUnicodeCategoryGroupCountAppender::new(
+            "directional_unicode_group_counts",
+            ByteWindowSpec::new(config.count_radius, config.count_radius),
+            vec![
+                UnicodeCategoryGroup::L,
+                UnicodeCategoryGroup::N,
+                UnicodeCategoryGroup::P,
+                UnicodeCategoryGroup::S,
+                UnicodeCategoryGroup::Z,
+                UnicodeCategoryGroup::C,
+            ],
+        )),
+        Box::new(LineByteCountAppender::new(
+            "line_structure_counts",
+            vec![b'\n', b'#', b'-', b'*', b':', b'"', b'\'', b'<', b'>', b','],
+        )),
+    ])
+}
+
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 struct LineCandidate {
     start: usize,
@@ -382,8 +763,14 @@ fn sentence_spans(text: &str, suppress: &[AnnotationSpan]) -> Vec<(usize, usize)
         if break_end <= start {
             continue;
         }
-        if overlaps_any(start, break_end, suppress) {
-            cursor = next_allowed_nonspace(text, break_end, suppress);
+        if let Some(overlap) = first_overlapping_span(start, break_end, suppress) {
+            if overlap.start > start
+                && let Some(end) = previous_nonspace_end(text, start, overlap.start)
+                && end > start
+            {
+                spans.push((start, end));
+            }
+            cursor = next_allowed_nonspace(text, overlap.end, suppress);
             continue;
         }
         spans.push((start, break_end));
@@ -398,7 +785,13 @@ fn sentence_spans(text: &str, suppress: &[AnnotationSpan]) -> Vec<(usize, usize)
     spans
 }
 
-fn sentence_break_candidates(text: &str) -> Vec<usize> {
+#[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd)]
+pub struct SentenceBoundaryCandidate {
+    pub feature_pos: usize,
+    pub break_end: usize,
+}
+
+pub fn sentence_boundary_candidates(text: &str) -> Vec<SentenceBoundaryCandidate> {
     let mut candidates = Vec::new();
     for (offset, ch) in text.char_indices() {
         if !is_sentence_terminal_char(ch) {
@@ -412,7 +805,10 @@ fn sentence_break_candidates(text: &str) -> Vec<usize> {
         }
         let break_end = absorb_trailing_closers(text, terminal_end);
         let Some(next_start) = next_nonspace_position(text, break_end, text.len()) else {
-            candidates.push(break_end);
+            candidates.push(SentenceBoundaryCandidate {
+                feature_pos: offset,
+                break_end,
+            });
             continue;
         };
         let Some(next_ch) = text[next_start..].chars().next() else {
@@ -421,10 +817,20 @@ fn sentence_break_candidates(text: &str) -> Vec<usize> {
         if next_ch.is_uppercase()
             || matches!(next_ch, '"' | '\'' | '“' | '‘' | '#' | '-' | '*' | '•')
         {
-            candidates.push(break_end);
+            candidates.push(SentenceBoundaryCandidate {
+                feature_pos: offset,
+                break_end,
+            });
         }
     }
     candidates
+}
+
+fn sentence_break_candidates(text: &str) -> Vec<usize> {
+    sentence_boundary_candidates(text)
+        .into_iter()
+        .map(|candidate| candidate.break_end)
+        .collect()
 }
 
 /// Renders nested inline tags from standoff spans.
@@ -612,6 +1018,17 @@ fn overlaps_any(start: usize, end: usize, spans: &[AnnotationSpan]) -> bool {
         .any(|span| ranges_overlap(start, end, span.start, span.end))
 }
 
+fn first_overlapping_span(
+    start: usize,
+    end: usize,
+    spans: &[AnnotationSpan],
+) -> Option<&AnnotationSpan> {
+    spans
+        .iter()
+        .filter(|span| ranges_overlap(start, end, span.start, span.end))
+        .min_by_key(|span| (span.start, span.end))
+}
+
 fn ranges_overlap(a_start: usize, a_end: usize, b_start: usize, b_end: usize) -> bool {
     a_start < b_end && b_start < a_end
 }
@@ -677,6 +1094,10 @@ fn has_metadata_colon(line: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use charstreamer_backend_burn::{BurnShallowMlpFitOptions, BurnShallowMlpModel};
+    use charstreamer_core::{DatasetView, FeatureMatrix, FitScratch, TrainablePredictor};
+    use serde_json::json;
+    use std::time::{SystemTime, UNIX_EPOCH};
 
     #[test]
     fn combined_segmenter_merges_structural_and_sentence_spans() {
@@ -714,5 +1135,87 @@ mod tests {
                 && text.is_char_boundary(span.start)
                 && text.is_char_boundary(span.end)
         }));
+    }
+
+    #[test]
+    fn burn_sentence_bundle_loads_and_annotates() {
+        let feature_config = BurnSentenceFeatureConfig {
+            hidden_dim: 4,
+            ..BurnSentenceFeatureConfig::default()
+        };
+        let kernel = burn_sentence_kernel(&feature_config);
+        let feature_dim = kernel.schema().total_dim();
+        let features = FeatureMatrix {
+            rows: 4,
+            cols: feature_dim,
+            data: vec![0.0; 4 * feature_dim],
+        };
+        let labels = [1_u8, 1, 0, 0];
+        let (model, _) = BurnShallowMlpModel::fit(
+            DatasetView {
+                features: features.as_view(),
+                labels: &labels,
+            },
+            &BurnShallowMlpFitOptions {
+                hidden_dim: feature_config.hidden_dim,
+                epochs: 1,
+                batch_size: 2,
+                learning_rate: 1.0e-3,
+                seed: 3,
+            },
+            &mut FitScratch::default(),
+        )
+        .expect("toy Burn model should train");
+
+        let model_dir = std::env::temp_dir().join(format!(
+            "charstreamer-burn-test-{}-{}",
+            std::process::id(),
+            SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .expect("system clock should be after epoch")
+                .as_nanos()
+        ));
+        fs::create_dir_all(&model_dir).expect("temp model dir should be created");
+        model
+            .save_named_mpk(model_dir.join("sentence_boundary"))
+            .expect("toy Burn model should serialize");
+
+        let manifest = json!({
+            "format": MODEL_FORMAT,
+            "name": MODEL_NAME,
+            "version": env!("CARGO_PKG_VERSION"),
+            "engine": BURN_SENTENCE_ENGINE,
+            "task": "sentence_boundary",
+            "features": {
+                "encoded_left": feature_config.encoded_left,
+                "encoded_right": feature_config.encoded_right,
+                "count_radius": feature_config.count_radius,
+                "feature_dim": feature_dim,
+                "hidden_dim": feature_config.hidden_dim
+            },
+            "thresholds": {
+                "sentence.end": 0.0
+            },
+            "files": [
+                {
+                    "path": "sentence_boundary.mpk",
+                    "role": "sentence_boundary"
+                }
+            ]
+        });
+        fs::write(
+            model_dir.join("manifest.json"),
+            serde_json::to_vec_pretty(&manifest).expect("manifest should serialize"),
+        )
+        .expect("manifest should be written");
+
+        let segmenter = BurnSentenceSegmenter::from_dir(&model_dir, SegmenterConfig::default())
+            .expect("model bundle should load");
+        let annotation = segmenter
+            .annotate("One sentence. Another sentence.")
+            .expect("loaded model should annotate");
+        assert!(annotation.tagged.contains("<|sentence|>"));
+
+        fs::remove_dir_all(model_dir).expect("temp model dir should be removed");
     }
 }

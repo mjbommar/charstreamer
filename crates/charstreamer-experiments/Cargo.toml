@@ -11,10 +11,10 @@ publish = false
 
 [dependencies]
 burn.workspace = true
-charstreamer-backend-burn = { path = "../charstreamer-backend-burn", version = "0.1.0" }
-charstreamer-core = { path = "../charstreamer-core", version = "0.1.0" }
-charstreamer-kernels = { path = "../charstreamer-kernels", version = "0.1.0" }
-charstreamer-models-native = { path = "../charstreamer-models-native", version = "0.1.0" }
+charstreamer-backend-burn = { path = "../charstreamer-backend-burn", version = "0.1.1" }
+charstreamer-core = { path = "../charstreamer-core", version = "0.1.1" }
+charstreamer-kernels = { path = "../charstreamer-kernels", version = "0.1.1" }
+charstreamer-models-native = { path = "../charstreamer-models-native", version = "0.1.1" }
 rand.workspace = true
 serde.workspace = true
 serde_json.workspace = true

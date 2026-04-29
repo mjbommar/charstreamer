@@ -14,7 +14,7 @@ jobs:
       - uses: actions/checkout@v6
 
       - name: Install system dependencies
-        run: sudo apt-get update && sudo apt-get install -y libopenblas-dev pkg-config
+        run: sudo apt-get update && sudo apt-get install -y libopenblas-dev patchelf pkg-config
 
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable
@@ -56,7 +56,7 @@ jobs:
       - uses: actions/checkout@v6
 
       - name: Install system dependencies
-        run: sudo apt-get update && sudo apt-get install -y libopenblas-dev pkg-config
+        run: sudo apt-get update && sudo apt-get install -y libopenblas-dev patchelf pkg-config
 
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable
@@ -68,7 +68,7 @@ jobs:
         run: uvx maturin build --release --manifest-path crates/charstreamer-python/Cargo.toml --out dist
 
       - name: Check wheel metadata
-        run: uvx twine check dist/*
+        run: uvx twine check dist/*.whl
 
       - name: Smoke-test wheel
         env:

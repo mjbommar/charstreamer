@@ -2,11 +2,15 @@
 
 ## Current State
 
-`charstreamer` can build and ship a PyO3 wheel today, but the production Python
-entry point still runs the native heuristic segmenter unless a usable model
-runtime is wired in. The previous `v0.1.0` wheel did not contain a trained Burn
-model. Future model-backed releases must pass the gates in this document before
-publication.
+`v0.1.0` on PyPI was heuristic-only. `v0.1.1` is the first model-backed release
+target: the Python wheel vendors a Burn shallow-MLP sentence-boundary bundle and
+loads it automatically from `charstreamer.Segmenter.default()`.
+
+The first production bundle is intentionally narrow. It replaces sentence
+boundary scoring with Burn inference while retaining deterministic native logic
+for structural spans (`paragraph`, `metadata`, `section`, `list_item`, and
+`dialogue`). That gives us a real serialized model path without blocking the
+release on every semantic label.
 
 ## Required Artifact Layout
 
@@ -24,27 +28,30 @@ directory. The manifest format is:
   "format": "charstreamer.model-bundle.v1",
   "name": "charstreamer-default",
   "version": "0.1.1",
-  "engine": "burn_ndarray",
-  "task": "semantic_segmentation",
-  "created_at": "2026-04-29T00:00:00Z",
-  "labels": ["sentence", "paragraph", "section", "dialogue", "list_item", "metadata"],
+  "engine": "burn_shallow_mlp_sentence_v1",
+  "task": "sentence_boundary",
   "features": {
-    "encoded_left": 7,
-    "encoded_right": 7,
-    "count_radius": 32
+    "encoded_left": 15,
+    "encoded_right": 15,
+    "count_radius": 64,
+    "feature_dim": 109,
+    "hidden_dim": 256
   },
   "thresholds": {
-    "sentence.end": 0.55,
-    "paragraph.end": 0.60
+    "sentence.end": 0.36
   },
   "metrics": {
-    "validation_macro_f1": 0.95
+    "validation": {
+      "precision": 0.724,
+      "recall": 0.826,
+      "f1": 0.767
+    }
   },
   "files": [
     {
-      "path": "model.mpk",
-      "bytes": 123456,
-      "sha256": "..."
+      "path": "sentence_boundary.mpk",
+      "role": "sentence_boundary",
+      "bytes": 114134
     }
   ]
 }
@@ -54,22 +61,41 @@ Required fields:
 
 - `format` must be `charstreamer.model-bundle.v1`.
 - `name` must be `charstreamer-default` for the default package model.
-- `engine` must identify the runtime, for example `burn_ndarray`.
+- `engine` must identify the runtime, for example
+  `burn_shallow_mlp_sentence_v1`.
 - `files` must list every required payload file with relative paths.
 - Every listed file should include `bytes` and `sha256` so package and runtime
   validation can catch partial or stale artifacts.
+
+The first bundle records byte counts. Adding `sha256` is still recommended for
+release artifacts and is supported by both validation scripts and the Python
+runtime.
 
 ## Vendoring Into The Wheel
 
 Recommended public release path:
 
 ```bash
+cargo run --release -p charstreamer-segmentation --example train_sentence_burn -- \
+  --input data/synthetic/kl3m_streaming_spans_20260429_per_label_5k.jsonl \
+  --out target/model/charstreamer-default-0.1.1 \
+  --hidden-dim 256 \
+  --epochs 80 \
+  --batch-size 512 \
+  --learning-rate 0.0005 \
+  --seed 17 \
+  --encoded-left 15 \
+  --encoded-right 15 \
+  --count-radius 64 \
+  --threshold 0.36
+
 python3 tools/model-artifacts/vendor_model.py \
   --require-burn \
   --archive-out dist/models/charstreamer-default-0.1.1.zip \
-  path/to/charstreamer-default-0.1.1.zip
+  target/model/charstreamer-default-0.1.1
 
-uvx maturin build --release \
+uv run --with 'maturin[patchelf]' maturin build \
+  --release \
   --manifest-path crates/charstreamer-python/Cargo.toml \
   --out dist
 
@@ -101,6 +127,10 @@ order:
 4. GitHub release download URL, unless disabled.
 5. Native heuristic fallback.
 
+Only engines in the Python wrapper's supported-engine set are treated as
+model-backed. Unsupported or missing bundles fall back only when the caller does
+not pass `require_model=True`.
+
 Environment variables:
 
 - `CHARSTREAMER_MODEL_PATH`: local model bundle directory.
@@ -128,6 +158,6 @@ Model-backed public releases must prove all of the following:
 - The GitHub release also attaches the model zip for users that want to inspect
   or cache it separately.
 
-Until Burn model loading/inference is connected to the production segmenter,
-`require_model=True` intentionally fails for Burn artifacts. This prevents a
-wheel from claiming to contain a useful model that the runtime cannot execute.
+`require_model=True` intentionally fails when no supported bundle is resolved.
+This prevents silently shipping or deploying a package that looks model-backed
+but is running only the heuristic fallback.

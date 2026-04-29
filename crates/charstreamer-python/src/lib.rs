@@ -2,7 +2,7 @@ use std::time::Instant;
 use std::{collections::HashMap, collections::HashSet};
 
 use charstreamer_segmentation::{
-    AnnotationSpan, CombinedSegmenter, Label, SegmenterConfig, render_spans,
+    AnnotationSpan, BurnSentenceSegmenter, CombinedSegmenter, Label, SegmenterConfig, render_spans,
 };
 use pyo3::prelude::*;
 use pyo3::types::{PyDict, PyList};
@@ -100,10 +100,16 @@ impl From<&PySegmenterConfig> for SegmenterConfig {
     }
 }
 
-#[pyclass(name = "Segmenter")]
-#[derive(Clone, Debug)]
+#[derive(Debug)]
+enum SegmenterInner {
+    Heuristic(CombinedSegmenter),
+    BurnSentence(Box<BurnSentenceSegmenter>),
+}
+
+#[pyclass(name = "Segmenter", unsendable)]
+#[derive(Debug)]
 struct PySegmenter {
-    inner: CombinedSegmenter,
+    inner: SegmenterInner,
 }
 
 #[pymethods]
@@ -113,31 +119,57 @@ impl PySegmenter {
     fn new(config: Option<&PySegmenterConfig>) -> Self {
         let config = config.map_or_else(SegmenterConfig::default, SegmenterConfig::from);
         Self {
-            inner: CombinedSegmenter::new(config),
+            inner: SegmenterInner::Heuristic(CombinedSegmenter::new(config)),
         }
     }
 
     #[staticmethod]
     fn default() -> Self {
         Self {
-            inner: CombinedSegmenter::default(),
+            inner: SegmenterInner::Heuristic(CombinedSegmenter::default()),
         }
     }
 
+    #[staticmethod]
+    #[pyo3(signature = (model_dir, config=None))]
+    fn from_model_dir(model_dir: &str, config: Option<&PySegmenterConfig>) -> PyResult<Self> {
+        let config = config.map_or_else(SegmenterConfig::default, SegmenterConfig::from);
+        let segmenter = BurnSentenceSegmenter::from_dir(model_dir, config).map_err(|error| {
+            pyo3::exceptions::PyRuntimeError::new_err(format!(
+                "failed to load CharStreamer model from `{model_dir}`: {error}"
+            ))
+        })?;
+        Ok(Self {
+            inner: SegmenterInner::BurnSentence(Box::new(segmenter)),
+        })
+    }
+
     fn spans<'py>(&self, py: Python<'py>, text: &str) -> PyResult<Bound<'py, PyList>> {
-        spans_to_pylist(py, text, &self.inner.spans(text))
+        let spans = match &self.inner {
+            SegmenterInner::Heuristic(inner) => inner.spans(text),
+            SegmenterInner::BurnSentence(inner) => inner.spans(text).map_err(model_error)?,
+        };
+        spans_to_pylist(py, text, &spans)
     }
 
     fn annotate<'py>(&self, py: Python<'py>, text: &str) -> PyResult<Bound<'py, PyDict>> {
-        let annotation = self.inner.annotate(text);
+        let annotation = match &self.inner {
+            SegmenterInner::Heuristic(inner) => inner.annotate(text),
+            SegmenterInner::BurnSentence(inner) => inner.annotate(text).map_err(model_error)?,
+        };
         let dict = PyDict::new(py);
         dict.set_item("tagged", annotation.tagged)?;
         dict.set_item("spans", spans_to_pylist(py, text, &annotation.spans)?)?;
         Ok(dict)
     }
 
-    fn tagged(&self, text: &str) -> String {
-        self.inner.annotate(text).tagged
+    fn tagged(&self, text: &str) -> PyResult<String> {
+        Ok(match &self.inner {
+            SegmenterInner::Heuristic(inner) => inner.annotate(text).tagged,
+            SegmenterInner::BurnSentence(inner) => {
+                inner.annotate(text).map_err(model_error)?.tagged
+            }
+        })
     }
 
     #[pyo3(signature = (text, iterations=10))]
@@ -152,7 +184,10 @@ impl PySegmenter {
         let mut span_count = 0_usize;
         let mut tagged_bytes = 0_usize;
         for _ in 0..iterations {
-            let annotation = self.inner.annotate(text);
+            let annotation = match &self.inner {
+                SegmenterInner::Heuristic(inner) => inner.annotate(text),
+                SegmenterInner::BurnSentence(inner) => inner.annotate(text).map_err(model_error)?,
+            };
             span_count = annotation.spans.len();
             tagged_bytes = annotation.tagged.len();
         }
@@ -195,7 +230,7 @@ fn spans<'py>(py: Python<'py>, text: &str) -> PyResult<Bound<'py, PyList>> {
 }
 
 #[pyfunction]
-fn tagged(text: &str) -> String {
+fn tagged(text: &str) -> PyResult<String> {
     PySegmenter::default().tagged(text)
 }
 
@@ -253,6 +288,10 @@ fn render_bytes<'py>(
         .collect::<PyResult<Vec<_>>>()?;
     let _ = py;
     Ok(render_spans(text, &converted))
+}
+
+fn model_error(error: charstreamer_segmentation::ModelArtifactError) -> PyErr {
+    pyo3::exceptions::PyRuntimeError::new_err(error.to_string())
 }
 
 fn spans_to_pylist<'py>(

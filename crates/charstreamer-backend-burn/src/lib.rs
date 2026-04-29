@@ -7,6 +7,7 @@ use burn::nn::lstm::{Lstm, LstmConfig};
 use burn::nn::{Linear, LinearConfig, Relu};
 use burn::optim::{AdamConfig, GradientsParams, Optimizer};
 use burn::prelude::*;
+use burn::record::{FullPrecisionSettings, NamedMpkFileRecorder};
 use burn::tensor::activation::sigmoid;
 use burn::tensor::{TensorData, backend::Backend};
 use charstreamer_core::{
@@ -17,9 +18,39 @@ use rand::SeedableRng;
 use rand::rngs::SmallRng;
 use rand::seq::SliceRandom;
 use serde::{Deserialize, Serialize};
+use std::fmt::{Display, Formatter};
+use std::path::Path;
 
 type InferBackend = NdArray<f32>;
 type TrainBackend = Autodiff<InferBackend>;
+
+#[derive(Debug)]
+pub struct BurnModelIoError {
+    message: String,
+}
+
+impl BurnModelIoError {
+    #[must_use]
+    pub fn new(message: impl Into<String>) -> Self {
+        Self {
+            message: message.into(),
+        }
+    }
+}
+
+impl Display for BurnModelIoError {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        f.write_str(&self.message)
+    }
+}
+
+impl std::error::Error for BurnModelIoError {}
+
+impl From<burn::record::RecorderError> for BurnModelIoError {
+    fn from(error: burn::record::RecorderError) -> Self {
+        Self::new(format!("burn model recorder error: {error}"))
+    }
+}
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct BurnShallowMlpFitOptions {
@@ -420,6 +451,36 @@ impl<B: Backend> BinaryLogitModule<B> for WindowLstm<B> {
 #[derive(Debug)]
 pub struct BurnWindowLstmModel {
     model: WindowLstm<InferBackend>,
+}
+
+impl BurnShallowMlpModel {
+    pub fn save_named_mpk(&self, path: impl AsRef<Path>) -> Result<(), BurnModelIoError> {
+        let recorder = NamedMpkFileRecorder::<FullPrecisionSettings>::new();
+        self.model
+            .clone()
+            .save_file(path.as_ref().to_path_buf(), &recorder)?;
+        Ok(())
+    }
+
+    pub fn load_named_mpk(
+        input_dim: usize,
+        hidden_dim: usize,
+        path: impl AsRef<Path>,
+    ) -> Result<Self, BurnModelIoError> {
+        if input_dim == 0 || hidden_dim == 0 {
+            return Err(BurnModelIoError::new(
+                "burn shallow MLP load requires positive input_dim and hidden_dim",
+            ));
+        }
+        let device = Default::default();
+        let recorder = NamedMpkFileRecorder::<FullPrecisionSettings>::new();
+        let model = ShallowMlp::new(input_dim, hidden_dim, &device).load_file(
+            path.as_ref().to_path_buf(),
+            &recorder,
+            &device,
+        )?;
+        Ok(Self { model })
+    }
 }
 
 fn matrix_to_tensor<B: Backend>(
