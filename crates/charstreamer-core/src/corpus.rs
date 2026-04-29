@@ -431,6 +431,7 @@ fn scalar_to_byte_offsets(text: &str) -> Vec<usize> {
 #[cfg(test)]
 mod tests {
     use crate::corpus::{load_alea_jsonl, parse_alea_annotated_text, split_documents};
+    use std::fs;
 
     #[test]
     fn parse_alea_text_into_clean_text_and_spans() {
@@ -460,9 +461,19 @@ mod tests {
     }
 
     #[test]
-    fn loads_real_alea_jsonl_example() {
-        let path = "/home/mjbommar/projects/personal/legal-sentence-paper/data/alea-legal-benchmark/train.jsonl";
-        let documents = load_alea_jsonl(path, Some(1)).expect("ALEA dataset should load");
+    fn loads_alea_jsonl_example() {
+        let path = std::env::temp_dir().join(format!(
+            "charstreamer-alea-fixture-{}.jsonl",
+            std::process::id()
+        ));
+        fs::write(
+            &path,
+            "{\"text\":\"One.<|sentence|> Two.<|sentence|><|paragraph|>Three.\"}\n",
+        )
+        .expect("fixture should write");
+
+        let documents = load_alea_jsonl(&path, Some(1)).expect("ALEA dataset should load");
+        fs::remove_file(&path).expect("fixture should be removed");
         assert_eq!(documents.len(), 1);
         assert!(!documents[0].text.is_empty());
         assert!(!documents[0].sentence_spans.is_empty());
