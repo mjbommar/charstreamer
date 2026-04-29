@@ -9,7 +9,7 @@ on:
 jobs:
   rust:
     name: Rust
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v6
 
@@ -38,9 +38,14 @@ jobs:
 
   python-tools:
     name: Python Tools
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v6
+
+      - name: Install Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
 
       - name: Install uv
         uses: astral-sh/setup-uv@v8.1.0
@@ -50,13 +55,70 @@ jobs:
         run: uv run pytest
 
   wheel:
-    name: Wheel
-    runs-on: ubuntu-latest
+    name: Wheel ${{ matrix.id }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - id: linux-x86_64
+            os: ubuntu-24.04
+          - id: linux-aarch64
+            os: ubuntu-24.04-arm
+          - id: macos-x86_64
+            os: macos-15-intel
+            delocate_arch: x86_64
+          - id: macos-aarch64
+            os: macos-15
+            delocate_arch: arm64
+          - id: windows-x86_64
+            os: windows-2025
+            vcpkg_triplet: x64-windows
+          - id: windows-aarch64
+            os: windows-11-arm
+            vcpkg_triplet: arm64-windows
     steps:
       - uses: actions/checkout@v6
 
-      - name: Install system dependencies
+      - name: Install Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install Linux dependencies
+        if: runner.os == 'Linux'
         run: sudo apt-get update && sudo apt-get install -y libopenblas-dev patchelf pkg-config
+
+      - name: Install macOS dependencies
+        if: runner.os == 'macOS'
+        shell: bash
+        run: |
+          brew install openblas pkg-config
+          openblas_prefix="$(brew --prefix openblas)"
+          {
+            echo "OPENBLAS_DIR=$openblas_prefix"
+            echo "PKG_CONFIG_PATH=$openblas_prefix/lib/pkgconfig:$PKG_CONFIG_PATH"
+            echo "DYLD_FALLBACK_LIBRARY_PATH=$openblas_prefix/lib:$DYLD_FALLBACK_LIBRARY_PATH"
+          } >> "$GITHUB_ENV"
+
+      - name: Install Windows dependencies
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $vcpkgRoot = $env:VCPKG_INSTALLATION_ROOT
+          if (-not $vcpkgRoot) {
+            $vcpkgRoot = "C:\vcpkg"
+          }
+          if (-not (Test-Path "$vcpkgRoot\vcpkg.exe")) {
+            $vcpkgRoot = "$env:RUNNER_TEMP\vcpkg"
+            git clone https://github.com/microsoft/vcpkg.git $vcpkgRoot
+            & "$vcpkgRoot\bootstrap-vcpkg.bat" -disableMetrics
+          }
+          & "$vcpkgRoot\vcpkg.exe" install openblas:${{ matrix.vcpkg_triplet }}
+          "VCPKG_ROOT=$vcpkgRoot" >> $env:GITHUB_ENV
+          "VCPKG_DEFAULT_TRIPLET=${{ matrix.vcpkg_triplet }}" >> $env:GITHUB_ENV
+          "VCPKGRS_DYNAMIC=1" >> $env:GITHUB_ENV
+          "$vcpkgRoot\installed\${{ matrix.vcpkg_triplet }}\bin" >> $env:GITHUB_PATH
 
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable
@@ -64,20 +126,66 @@ jobs:
       - name: Install uv
         uses: astral-sh/setup-uv@v8.1.0
 
+      - name: Validate vendored model bundle
+        shell: bash
+        run: |
+          python tools/model-artifacts/vendor_model.py \
+            --require-burn \
+            "crates/charstreamer-python/python/charstreamer/models/default"
+
       - name: Build wheel
+        shell: bash
         run: uvx maturin build --release --manifest-path crates/charstreamer-python/Cargo.toml --out dist
 
+      - name: Repair macOS wheel
+        if: runner.os == 'macOS'
+        shell: bash
+        run: |
+          uvx --from delocate delocate-wheel \
+            --require-archs "${{ matrix.delocate_arch }}" \
+            -w wheelhouse \
+            dist/*.whl
+          rm dist/*.whl
+          mv wheelhouse/*.whl dist/
+
+      - name: Repair Windows wheel
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force -Path wheelhouse | Out-Null
+          $wheel = Get-ChildItem dist\*.whl | Select-Object -First 1
+          uvx --from delvewheel delvewheel repair `
+            --add-path "$env:VCPKG_ROOT\installed\${{ matrix.vcpkg_triplet }}\bin" `
+            --wheel-dir wheelhouse `
+            $wheel.FullName
+          Remove-Item dist\*.whl
+          Move-Item wheelhouse\*.whl dist\
+
       - name: Check wheel metadata
+        shell: bash
         run: uvx twine check dist/*.whl
 
       - name: Check wheel contains usable model
-        run: python3 tools/model-artifacts/check_wheel_model.py --require-burn dist/*.whl
+        shell: bash
+        run: |
+          for wheel in dist/*.whl; do
+            python tools/model-artifacts/check_wheel_model.py --require-burn "$wheel"
+          done
 
       - name: Smoke-test wheel
+        shell: bash
         env:
           CHARSTREAMER_AUTO_DOWNLOAD: "0"
         run: |
-          uv run --isolated --with ./dist/charstreamer-*.whl python - <<'PY'
+          wheel="$(python - <<'PY'
+          from pathlib import Path
+          wheels = sorted(Path("dist").glob("charstreamer-*.whl"))
+          if len(wheels) != 1:
+              raise SystemExit(f"expected one wheel, found {len(wheels)}")
+          print(wheels[0].as_posix())
+          PY
+          )"
+          uv run --isolated --with "$wheel" python - <<'PY'
           import charstreamer
 
           info = charstreamer.model_info(allow_download=False, require_model=True)
@@ -92,5 +200,5 @@ jobs:
       - name: Upload wheel artifact
         uses: actions/upload-artifact@v7
         with:
-          name: charstreamer-wheel
+          name: charstreamer-wheel-${{ matrix.id }}
           path: dist/*.whl

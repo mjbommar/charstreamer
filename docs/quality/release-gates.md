@@ -98,8 +98,12 @@ Must pass:
   configuration, and validation metrics.
 - `tools/model-artifacts/vendor_model.py --require-burn` validates the bundle
   and vendors it into the Python package before wheel build.
-- `tools/model-artifacts/check_wheel_model.py --require-burn dist/*.whl`
-  passes on the built wheel.
-- The wheel smoke test runs the hello-world example with
+- The release workflow creates one normalized model zip and every platform
+  wheel must use that exact bundle.
+- `tools/model-artifacts/check_wheel_model.py --require-burn <wheel>` passes on
+  every Linux, macOS, and Windows wheel.
+- Every wheel smoke test runs the hello-world example with
   `CHARSTREAMER_AUTO_DOWNLOAD=0` so bundled model loading is proven offline.
-- The release workflow attaches both the wheel and normalized model zip.
+- The release workflow builds Linux x86_64, Linux aarch64, macOS x86_64, macOS
+  arm64, Windows x86_64, Windows arm64, and sdist artifacts before publishing.
+- The release workflow attaches all distributions and the normalized model zip.

@@ -129,6 +129,10 @@ def validate_manifest(root: Path, manifest: dict[str, Any], *, require_burn: boo
 
 def vendor(root: Path, dest: Path) -> None:
     dest = dest.resolve()
+    root = root.resolve()
+    if root == dest:
+        return
+
     if dest.exists():
         for child in dest.iterdir():
             if child.name == ".gitkeep":

@@ -93,8 +93,20 @@ Primary support targets:
 - `aarch64-apple-darwin`
 - `x86_64-apple-darwin`
 - `x86_64-pc-windows-msvc`
+- `aarch64-pc-windows-msvc`
 
 Python wheel targets should follow the subset that maturin can support reliably.
+The public wheel matrix is:
+
+- `manylinux` Linux x86_64 on `ubuntu-24.04`
+- `manylinux` Linux aarch64 on `ubuntu-24.04-arm`
+- macOS x86_64 on `macos-15-intel`
+- macOS arm64 on `macos-15`
+- Windows x86_64 on `windows-2025`
+- Windows arm64 on `windows-11-arm`
+
+The Python extension uses `abi3-py39`, so each supported OS/architecture only
+needs one wheel rather than one wheel per Python minor version.
 
 ## CPU optimization policy
 
@@ -118,6 +130,16 @@ Package split:
 
 - Rust crate in `crates/charstreamer-py/`
 - Python packaging metadata in `python/`
+
+Native dependency policy:
+
+- Linux wheels should be repaired by `maturin`/`auditwheel`; OpenBLAS and
+  Fortran runtime libraries are vendored when dynamically linked.
+- macOS wheels should be repaired with `delocate` so Homebrew OpenBLAS dylibs
+  are copied into the wheel and install names are rewritten.
+- Windows wheels should install OpenBLAS through `vcpkg` and be repaired with
+  `delvewheel` so required DLLs are included in the wheel.
+- Source builds may still require a working system BLAS/OpenBLAS toolchain.
 
 ## Artifact policy
 
@@ -156,5 +178,16 @@ Recommended matrix:
 
 - Linux x64
 - Linux arm64
+- macOS x64
 - macOS arm64
 - Windows x64
+- Windows arm64
+
+Release workflow shape:
+
+- `prepare`: validate the requested tag and create one normalized model bundle.
+- `wheel`: build and repair one wheel per supported OS/architecture from that
+  exact model bundle.
+- `sdist`: build the source distribution with the same vendored model.
+- `publish`: publish only after all platform artifacts pass metadata,
+  model-bundle, and offline smoke-test gates.

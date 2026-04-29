@@ -1,66 +1,154 @@
 # CharStreamer
 
-CharStreamer is a Rust-first toolkit for high-throughput text stream
-classification and segmentation. It is designed around reusable byte/character
-window primitives, feature kernels, and CPU model backends that can be composed
-for tasks such as sentence boundary detection, semantic span annotation,
-IOB-style tagging, and format change-point detection.
+CharStreamer is a Rust/Python toolkit for high-throughput text stream
+classification and segmentation. The default Python package ships model-backed
+sentence and semantic-structure annotation; the Rust crates expose the reusable
+byte/character windows, feature kernels, decoders, and Burn model backend used
+to build that runtime.
 
-The repository currently contains an early public development release. APIs are
-expected to evolve, but the core direction is stable: byte-first data layout,
-explicit Unicode-aware feature paths, reusable hot-loop primitives, and a small
-external model-backend surface centered on Burn.
+Current default labels:
 
-## What Is Included
+- `sentence`
+- `paragraph`
+- `metadata`
+- `section`
+- `list_item`
 
-- `charstreamer-core`: text views, candidate buffers, feature matrices,
-  pipelines, metrics, corpus helpers, and decoders.
-- `charstreamer-kernels`: byte scanners, Unicode category features, rolling
-  window features, and reusable feature appenders.
-- `charstreamer-models-native`: native CPU linear/logistic model primitives.
-- `charstreamer-backend-burn`: Burn-based neural model experiments for CPU
-  training and inference.
-- `charstreamer-segmentation`: model-backed segmentation and merged annotation
-  rendering.
-- `charstreamer-python`: PyO3/maturin extension module for Python access.
-- `charstreamer-experiments`: local experiment runners and reproducibility
-  manifests. This crate is not intended for crates.io publication.
-- `tools/span-generator`: streaming weak-label data generation utility for
-  OpenAI-assisted semantic span annotation.
+The default runtime must load a supported model bundle. It does not synthesize
+semantic annotations from hard-coded rules when a model is unavailable.
 
-## Repository Status
+## Install
 
-This is a first public checkpoint, not a polished stable API release. The main
-release goals for this checkpoint are:
+```bash
+pip install charstreamer
+```
 
-- keep the source tree buildable and testable from a clean clone
-- keep generated data, model artifacts, virtual environments, and logs out of
-  git
-- preserve enough docs and experiment manifests to reproduce current design
-  decisions
-- keep the active external Rust model dependency path focused on Burn
+The Python package exposes a `cp39-abi3` extension, so one wheel works across
+Python 3.9+ for a given OS/architecture. If no wheel is available for your
+platform, source builds require Rust 1.89+ and a working BLAS/OpenBLAS setup.
 
-Important model status:
+## Quick Start
 
-- `v0.1.0` on PyPI does **not** contain a trained Burn model.
-- `v0.1.1` contains the first model-backed wheel, but its PyPI long description
-  predates the combined semantic model.
-- `v0.1.2` is the current model-backed release. The wheel vendors a Burn
-  sentence-boundary model and a Burn semantic structure model for `paragraph`,
-  `metadata`, `section`, and `list_item`.
-- The default runtime must load a supported model bundle. It must not synthesize
-  semantic annotations from hard-coded rules when a model is unavailable.
+```python
+import charstreamer
 
-## Build And Test
+text = """Background
+The court reviewed the invoice. The shipment was late.
+
+Notice was timely.
+"""
+
+segmenter = charstreamer.Segmenter.default()
+annotation = segmenter.annotate(text)
+
+print(segmenter.model_info()["runtime"])
+print(annotation["spans"][:5])
+print(annotation["tagged"])
+```
+
+Output is a dictionary with scored spans and a rendered tagged string. Exact
+scores and semantic labels depend on the model version. Abridged `v0.1.2`
+output for the text above looks like:
+
+```text
+burn_combined_segmentation
+[
+  {"label": "section", "start": 0, "end": 10, "start_byte": 0, "end_byte": 10, "score": ...},
+  {"label": "paragraph", "start": 11, "end": 65, "start_byte": 11, "end_byte": 65, "score": ...},
+  {"label": "sentence", "start": 11, "end": 42, "start_byte": 11, "end_byte": 42, "score": ...},
+  {"label": "sentence", "start": 43, "end": 65, "start_byte": 43, "end_byte": 65, "score": ...},
+  {"label": "metadata", "start": 67, "end": 85, "start_byte": 67, "end_byte": 85, "score": ...}
+]
+<|section|>Background</|section|>
+<|paragraph|><|sentence|>The court reviewed the invoice.</|sentence|> <|sentence|>The shipment was late.</|sentence|></|paragraph|>
+
+<|metadata|><|sentence|>Notice was timely.</|sentence|></|metadata|>
+```
+
+Convenience functions are also available:
+
+```python
+import charstreamer
+
+print(charstreamer.spans("The court reviewed the invoice. Notice was timely."))
+print(charstreamer.tagged("The court reviewed the invoice. Notice was timely."))
+```
+
+## Model Loading
+
+`Segmenter.default()` resolves models in this order:
+
+- `CHARSTREAMER_MODEL_PATH`
+- bundled wheel data under `charstreamer/models/default/`
+- local cache under `~/.cache/charstreamer/models/default`
+- GitHub release artifact, unless downloads are disabled
+
+Production startup should assert that a real model is available:
+
+```python
+import charstreamer
+
+charstreamer.model_info(allow_download=False, require_model=True)
+segmenter = charstreamer.Segmenter.default(allow_download=False, require_model=True)
+```
+
+Useful environment variables:
+
+- `CHARSTREAMER_AUTO_DOWNLOAD=0`: disable release-artifact downloads.
+- `CHARSTREAMER_MODEL_PATH=/path/to/model`: use a specific model directory.
+- `CHARSTREAMER_MODEL_CACHE=/path/to/cache`: override the model cache root.
+- `CHARSTREAMER_MODEL_URL=https://.../charstreamer-default-<version>.zip`: use a specific download URL.
+
+## Current Release
+
+`v0.1.2` is the current model-backed release. It vendors a Burn
+sentence-boundary model and a Burn semantic-structure model.
+
+Current default bundle metrics:
+
+```text
+runtime: burn_combined_segmentation
+sentence validation f1: 0.977
+semantic fixed-validation macro f1: 0.746
+semantic labels: paragraph, metadata, section, list_item
+```
+
+Notes:
+
+- `v0.1.0` on PyPI did not contain a trained Burn model.
+- `v0.1.1` contained the first model-backed wheel, but its PyPI long description
+  predated the combined semantic model.
+- `dialogue` is reserved until a balanced dialogue training set exists.
+
+## Platform Builds
+
+The release workflow is configured to build:
+
+- Linux x86_64
+- Linux aarch64
+- macOS x86_64
+- macOS arm64
+- Windows x86_64
+- Windows arm64
+- sdist
+
+Native dependency bundling is platform-specific:
+
+- Linux wheels are repaired by `maturin`/`auditwheel`.
+- macOS wheels are repaired with `delocate`.
+- Windows wheels install OpenBLAS through `vcpkg` and are repaired with
+  `delvewheel`.
+
+## Rust Development
 
 Prerequisites:
 
 - Rust 1.89 or newer
-- a system BLAS/OpenBLAS installation for the current Burn `ndarray` backend
+- system BLAS/OpenBLAS for the current Burn `ndarray` backend
 - Python 3.9+ and `maturin` only if building the Python extension
-- `uv` only if using `tools/span-generator`
+- `uv` only if using Python tools
 
-Run the Rust test suite:
+Run tests:
 
 ```bash
 cargo test --workspace
@@ -81,13 +169,13 @@ cd crates/charstreamer-python
 maturin develop
 ```
 
-Build the release wheel locally:
+Build a local wheel from the checked-in vendored model:
 
 ```bash
 python3 tools/model-artifacts/vendor_model.py \
   --require-burn \
   --archive-out dist-models/charstreamer-default-0.1.2.zip \
-  target/model/charstreamer-default-0.1.1-release
+  crates/charstreamer-python/python/charstreamer/models/default
 
 uvx --with 'maturin[patchelf]' maturin build \
   --release \
@@ -95,148 +183,68 @@ uvx --with 'maturin[patchelf]' maturin build \
   --out dist
 
 uvx twine check dist/*.whl
-```
-
-Validate that a wheel contains a usable vendored model:
-
-```bash
 python3 tools/model-artifacts/check_wheel_model.py --require-burn dist/charstreamer-*.whl
 ```
 
-## Release
+Run example pipelines:
+
+```bash
+cargo run -p charstreamer-core --example narrow_slice
+cargo run -p charstreamer-core --example format_switch
+```
+
+## Repository Layout
+
+- `charstreamer-core`: text views, candidate buffers, feature matrices,
+  pipelines, metrics, corpus helpers, and decoders.
+- `charstreamer-kernels`: byte scanners, Unicode category features, rolling
+  window features, and reusable feature appenders.
+- `charstreamer-models-native`: native CPU linear/logistic model primitives.
+- `charstreamer-backend-burn`: Burn-based CPU neural model backend.
+- `charstreamer-segmentation`: model-backed segmentation and merged annotation
+  rendering.
+- `charstreamer-python`: PyO3/maturin extension module for Python access.
+- `charstreamer-experiments`: local experiment runners and reproducibility
+  manifests. This crate is not intended for crates.io publication.
+- `tools/span-generator`: streaming weak-label data generation utility for
+  OpenAI-assisted semantic span annotation.
+
+## Release Process
 
 The public distribution target is one PyPI package: `charstreamer`.
 
-GitHub Actions handles releases through the manual `Release` workflow. A
-model-backed release must provide or pre-upload a validated
-`charstreamer-default-<version>.zip` bundle before the wheel is built.
-
-The model bundle is validated and copied into:
-
-```text
-charstreamer/models/default/
-```
-
-inside the wheel. The release also attaches the normalized model zip to the
-GitHub release. The release workflow fails if the wheel does not contain a
-Burn-backed model bundle or if the Python default path cannot load a usable
-model offline.
-
-The usual sequence is:
+Run the manual GitHub Actions release workflow:
 
 ```bash
-gh release create v0.1.2 \
-  dist-models/charstreamer-default-0.1.2.zip \
-  --target main \
-  --title "CharStreamer v0.1.2" \
-  --notes-file CHANGELOG.md
-
 gh workflow run Release \
   -f tag=v0.1.2
 ```
 
-Alternatively, pass `-f model_artifact_url=https://.../charstreamer-default-0.1.2.zip`
-to the workflow and it will download that bundle directly.
-
-The release workflow builds a single `cp39-abi3` manylinux wheel, checks the
-wheel metadata, validates the model artifact, smoke-tests an isolated install,
-publishes to PyPI, and attaches the wheel and model zip to a GitHub release.
-
-PyPI publishing uses GitHub Actions secrets `PYPI_USERNAME` and
-`PYPI_API_TOKEN`, which can be populated from a local `.pypirc`. The workflow
-also uses the GitHub environment named `pypi`, so it can be switched to PyPI
-Trusted Publishing later without changing the release trigger.
-
-Current default bundle metrics:
-
-```text
-runtime: burn_combined_segmentation
-sentence validation f1: 0.977
-semantic fixed-validation macro f1: 0.746
-semantic labels: paragraph, metadata, section, list_item
-```
-
-## Quick Examples
-
-Install from PyPI:
+By default, the workflow creates the normalized
+`charstreamer-default-<version>.zip` bundle from the checked-in vendored model
+and uses that exact bundle for every wheel. To release from an externally staged
+bundle:
 
 ```bash
-pip install charstreamer
+gh workflow run Release \
+  -f tag=v0.1.2 \
+  -f model_artifact_url=https://.../charstreamer-default-0.1.2.zip
 ```
 
-Use from Python:
+The workflow fails if any wheel lacks a supported Burn model bundle or if the
+offline smoke test cannot load and run the default model.
 
-```python
-import charstreamer
-
-text = "The court reviewed the invoice. The shipment was late. Notice was timely."
-
-segmenter = charstreamer.Segmenter.default()
-print(segmenter.model_info())
-annotation = segmenter.annotate(text)
-print(annotation["spans"][:3])
-print(annotation["tagged"])
-```
-
-Model-backed output with the current wheel looks like:
-
-```python
-{
-    "resolved": True,
-    "source": "bundled",
-    "path": ".../site-packages/charstreamer/models/default",
-    "manifest": {"engine": "burn_shallow_mlp_sentence_v1", "structure": {"engine": "burn_multilabel_mlp_structure_v1", "...": "..."}, "...": "..."},
-    "error": None,
-    "runtime": "burn_combined_segmentation",
-    "model_inference": True,
-}
-```
-
-Example spans and tagged text:
-
-```python
-[
-    {"label": "sentence", "start": 0, "end": 31, "start_byte": 0, "end_byte": 31, "score": 0.99},
-    {"label": "sentence", "start": 32, "end": 54, "start_byte": 32, "end_byte": 54, "score": 0.99},
-    {"label": "sentence", "start": 55, "end": 73, "start_byte": 55, "end_byte": 73, "score": 0.96},
-]
-
-<|sentence|>The court reviewed the invoice.</|sentence|> <|sentence|>The shipment was late.</|sentence|> <|sentence|>Notice was timely.</|sentence|>
-```
-
-Force model-backed execution in tests or production startup:
-
-```python
-import charstreamer
-
-charstreamer.model_info(allow_download=False, require_model=True)
-segmenter = charstreamer.Segmenter.default(require_model=True)
-```
-
-That call must fail if no supported model is available. This is intentional: it
-prevents silently shipping a package that looks model-backed but is not.
-
-The current default model is an early combined sentence and structure model.
-`dialogue` is intentionally excluded until a balanced dialogue dataset exists.
-
-Run the narrow boundary pipeline example:
-
-```bash
-cargo run -p charstreamer-core --example narrow_slice
-```
-
-Run the mixed XML/CSV format-switch example:
-
-```bash
-cargo run -p charstreamer-core --example format_switch
-```
+PyPI publishing currently uses GitHub Actions secrets `PYPI_USERNAME` and
+`PYPI_API_TOKEN`. The workflow also uses the GitHub environment named `pypi`, so
+it can be switched to PyPI Trusted Publishing later.
 
 ## Data Policy
 
 Generated datasets, OpenAI annotation outputs, local logs, Python virtual
-environments, model artifacts, and benchmark texts are intentionally ignored.
-The checked-in repository should contain source, docs, tests, manifests, and
-small reproducibility scaffolding only.
+environments, and benchmark texts are intentionally ignored. The checked-in
+repository should contain source, docs, tests, manifests, small reproducibility
+scaffolding, and the currently vendored default model bundle used by the Python
+wheel.
 
 ## Documentation
 
@@ -247,6 +255,7 @@ Start with:
 - [docs/reference/primitives.md](docs/reference/primitives.md)
 - [docs/reference/model-families.md](docs/reference/model-families.md)
 - [docs/reference/model-artifacts.md](docs/reference/model-artifacts.md)
+- [docs/reference/build-and-packaging.md](docs/reference/build-and-packaging.md)
 - [docs/quality/release-gates.md](docs/quality/release-gates.md)
 - [docs/results.md](docs/results.md)
 
