@@ -6,7 +6,7 @@ license.workspace = true
 rust-version.workspace = true
 repository.workspace = true
 homepage.workspace = true
-description = "Rule-based semantic segmentation utilities for CharStreamer"
+description = "Model-backed semantic segmentation utilities for CharStreamer"
 
 [dependencies]
 charstreamer-backend-burn = { path = "../charstreamer-backend-burn", version = "0.1.1" }
@@ -14,13 +14,6 @@ charstreamer-core = { path = "../charstreamer-core", version = "0.1.1" }
 charstreamer-kernels = { path = "../charstreamer-kernels", version = "0.1.1" }
 serde.workspace = true
 serde_json.workspace = true
-
-[dev-dependencies]
-criterion.workspace = true
-
-[[bench]]
-name = "long_document"
-harness = false
 
 [lints]
 workspace = true

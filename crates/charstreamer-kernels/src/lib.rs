@@ -7,12 +7,11 @@ mod scanner;
 
 pub use byteset::{AsciiClassTable, ByteSet256};
 pub use features::{
-    AsciiClassAppender, BoundaryHeuristicAppender, BoundaryShapeAppender, ByteClass,
-    ByteClassCountAppender, ByteWindowAppender, CompositeFeatureKernel,
-    DirectionalByteClassCountAppender, DirectionalUnicodeCategoryCountAppender,
-    DirectionalUnicodeCategoryGroupCountAppender, EncodedByteWindowAppender,
-    LegalBoundaryHeuristicAppender, LineByteCountAppender, SelectedByteCountAppender,
-    UnicodeCategory, UnicodeCategoryGroup,
+    AsciiClassAppender, BoundaryShapeAppender, ByteClass, ByteClassCountAppender,
+    ByteWindowAppender, CompositeFeatureKernel, DirectionalByteClassCountAppender,
+    DirectionalUnicodeCategoryCountAppender, DirectionalUnicodeCategoryGroupCountAppender,
+    EncodedByteWindowAppender, LineByteCountAppender, SelectedByteCountAppender, UnicodeCategory,
+    UnicodeCategoryGroup,
 };
 pub use legacy::{CharBoundaryLegacyAppender, LegacyFeatureTables};
 pub use scanner::{ByteSetScanner, LineStartScanner, StrideScanner, Utf8CharSetScanner};

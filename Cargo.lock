@@ -563,7 +563,6 @@ dependencies = [
  "charstreamer-backend-burn",
  "charstreamer-core",
  "charstreamer-kernels",
- "criterion",
  "serde",
  "serde_json",
 ]

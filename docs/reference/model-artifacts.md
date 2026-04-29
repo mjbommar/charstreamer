@@ -2,15 +2,14 @@
 
 ## Current State
 
-`v0.1.0` on PyPI was heuristic-only. `v0.1.1` is the first model-backed release
-target: the Python wheel vendors a Burn shallow-MLP sentence-boundary bundle and
-loads it automatically from `charstreamer.Segmenter.default()`.
+`v0.1.1` is the first model-backed release target: the Python wheel vendors a
+Burn shallow-MLP sentence-boundary bundle and loads it automatically from
+`charstreamer.Segmenter.default()`.
 
-The first production bundle is intentionally narrow. It replaces sentence
-boundary scoring with Burn inference while retaining deterministic native logic
-for structural spans (`paragraph`, `metadata`, `section`, `list_item`, and
-`dialogue`). That gives us a real serialized model path without blocking the
-release on every semantic label.
+The first production bundle is intentionally narrow. It emits only labels backed
+by the loaded model. Structural labels (`paragraph`, `metadata`, `section`,
+`list_item`, and `dialogue`) must not be emitted until they have trained model
+support.
 
 ## Required Artifact Layout
 
@@ -34,24 +33,25 @@ directory. The manifest format is:
     "encoded_left": 15,
     "encoded_right": 15,
     "count_radius": 64,
-    "feature_dim": 109,
-    "hidden_dim": 256
+    "feature_dim": 97,
+    "hidden_dim": 128
   },
   "thresholds": {
-    "sentence.end": 0.36
+    "sentence.end": 0.59
   },
   "metrics": {
     "validation": {
-      "precision": 0.724,
-      "recall": 0.826,
-      "f1": 0.767
+      "precision": 0.981,
+      "recall": 0.973,
+      "f1": 0.977
     }
   },
   "files": [
     {
       "path": "sentence_boundary.mpk",
       "role": "sentence_boundary",
-      "bytes": 114134
+      "bytes": 51153,
+      "sha256": "357380e5c1173d59a6daa488c382e7b14af316b0964ab3dc75b184411aaa1b76"
     }
   ]
 }
@@ -77,24 +77,27 @@ Recommended public release path:
 
 ```bash
 cargo run --release -p charstreamer-segmentation --example train_sentence_burn -- \
+  --input /home/mjbommar/projects/personal/legal-sentence-paper/data/alea-legal-benchmark/train.jsonl \
+  --input data/generated/kl3m-sample-005-openai-10k.jsonl \
   --input data/synthetic/kl3m_streaming_spans_20260429_per_label_5k.jsonl \
-  --out target/model/charstreamer-default-0.1.1 \
-  --hidden-dim 256 \
-  --epochs 80 \
-  --batch-size 512 \
-  --learning-rate 0.0005 \
-  --seed 17 \
+  --out target/model/charstreamer-default-0.1.1-release \
+  --hidden-dim 128 \
+  --epochs 24 \
+  --batch-size 2048 \
+  --learning-rate 0.0008 \
+  --seed 29 \
   --encoded-left 15 \
   --encoded-right 15 \
   --count-radius 64 \
-  --threshold 0.36
+  --negative-keep-rate 0.02 \
+  --version 0.1.1
 
 python3 tools/model-artifacts/vendor_model.py \
   --require-burn \
-  --archive-out dist/models/charstreamer-default-0.1.1.zip \
-  target/model/charstreamer-default-0.1.1
+  --archive-out dist-models/charstreamer-default-0.1.1.zip \
+  target/model/charstreamer-default-0.1.1-release
 
-uv run --with 'maturin[patchelf]' maturin build \
+uvx --with 'maturin[patchelf]' maturin build \
   --release \
   --manifest-path crates/charstreamer-python/Cargo.toml \
   --out dist
@@ -125,11 +128,10 @@ order:
 3. Local cache at `CHARSTREAMER_MODEL_CACHE/default` or
    `~/.cache/charstreamer/models/default`.
 4. GitHub release download URL, unless disabled.
-5. Native heuristic fallback.
+5. Unresolved model status.
 
 Only engines in the Python wrapper's supported-engine set are treated as
-model-backed. Unsupported or missing bundles fall back only when the caller does
-not pass `require_model=True`.
+model-backed. Unsupported or missing bundles must not produce annotations.
 
 Environment variables:
 
@@ -160,4 +162,4 @@ Model-backed public releases must prove all of the following:
 
 `require_model=True` intentionally fails when no supported bundle is resolved.
 This prevents silently shipping or deploying a package that looks model-backed
-but is running only the heuristic fallback.
+but is not running a model.

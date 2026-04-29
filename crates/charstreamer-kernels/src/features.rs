@@ -161,14 +161,6 @@ fn normalized_byte(text: TextBytes<'_>, index: isize) -> f32 {
     f32::from(text.padded_byte(index)) / 255.0
 }
 
-fn next_non_space(text: TextBytes<'_>, start: usize) -> Option<u8> {
-    text.bytes()
-        .get(start..)?
-        .iter()
-        .copied()
-        .find(|byte| !byte.is_ascii_whitespace())
-}
-
 fn encoded_boundary_byte(byte: u8) -> f32 {
     match byte {
         0 => -3.0,
@@ -180,76 +172,6 @@ fn encoded_boundary_byte(byte: u8) -> f32 {
         b if b.is_ascii_punctuation() => -4.0,
         _ => -5.0,
     }
-}
-
-fn looks_like_abbreviation(text: TextBytes<'_>, position: usize) -> bool {
-    const COMMON_ABBREVIATIONS: &[&[u8]] = &[
-        b"mr.", b"mrs.", b"ms.", b"dr.", b"prof.", b"jr.", b"sr.", b"inc.", b"corp.", b"co.",
-        b"ltd.", b"no.", b"nos.", b"sec.", b"secs.", b"art.", b"arts.", b"u.s.", b"u.s.c.", b"v.",
-        b"vs.", b"st.", b"mt.",
-    ];
-
-    let bytes = text.bytes();
-    if bytes.get(position) != Some(&b'.') {
-        return false;
-    }
-
-    let mut start = position;
-    while start > 0 {
-        let byte = bytes[start - 1];
-        if byte.is_ascii_alphanumeric() || byte == b'.' {
-            start -= 1;
-        } else {
-            break;
-        }
-    }
-
-    let token = &bytes[start..=position];
-    if token.is_empty() {
-        return false;
-    }
-
-    let lowered: Vec<u8> = token.iter().map(|byte| byte.to_ascii_lowercase()).collect();
-    if COMMON_ABBREVIATIONS.contains(&lowered.as_slice()) {
-        return true;
-    }
-
-    let alpha_count = lowered
-        .iter()
-        .filter(|byte| byte.is_ascii_alphabetic())
-        .count();
-    let dot_count = lowered.iter().filter(|&&byte| byte == b'.').count();
-    alpha_count > 0 && (lowered.len() <= 4 || dot_count >= 2)
-}
-
-fn near_colon_before(text: TextBytes<'_>, position: usize, window: usize) -> bool {
-    let start = position.saturating_sub(window);
-    text.bytes()[start..position].contains(&b':')
-}
-
-fn semicolon_list_context(text: TextBytes<'_>, position: usize) -> bool {
-    if text.byte(position) != Some(b';') {
-        return false;
-    }
-
-    let bytes = text.bytes();
-    let start = position.saturating_sub(50);
-    let end = (position + 51).min(bytes.len());
-    let window = &bytes[start..end];
-    let semicolons = window.iter().filter(|&&byte| byte == b';').count();
-    semicolons >= 2 || window.contains(&b':')
-}
-
-fn balanced_quote_context(text: TextBytes<'_>, position: usize) -> bool {
-    if text.is_empty() {
-        return true;
-    }
-
-    let end = position.min(text.len() - 1);
-    let bytes = &text.bytes()[..=end];
-    let double_quotes = bytes.iter().filter(|&&byte| byte == b'"').count();
-    let single_quotes = bytes.iter().filter(|&&byte| byte == b'\'').count();
-    double_quotes % 2 == 0 && single_quotes % 2 == 0
 }
 
 /// Reusable byte classes for configuration-driven count features.
@@ -546,104 +468,6 @@ impl FeatureAppender<f32> for AsciiClassAppender {
             row[3] = bool_to_f32(self.classes.is_space(next));
             row[4] = bool_to_f32(self.classes.is_upper(next));
             row[5] = bool_to_f32(self.classes.is_lower(next));
-        }
-        Ok(())
-    }
-}
-
-/// Sentence-boundary-flavored heuristic block for the first demo model.
-#[derive(Clone, Copy, Debug, Default)]
-pub struct BoundaryHeuristicAppender;
-
-impl BoundaryHeuristicAppender {
-    #[must_use]
-    pub fn new() -> Self {
-        Self
-    }
-}
-
-impl FeatureAppender<f32> for BoundaryHeuristicAppender {
-    fn block(&self) -> FeatureBlock {
-        FeatureBlock::new("boundary_heuristics", 6)
-    }
-
-    fn append_into(
-        &self,
-        text: TextBytes<'_>,
-        positions: CandidateSlice<'_>,
-        mut out: FeatureMatrixViewMut<'_, f32>,
-        _scratch: &mut FeatureScratch,
-    ) -> Result<(), FeatureError> {
-        if out.rows != positions.len() || out.cols != 6 {
-            return Err(FeatureError::new(
-                "heuristic appender got a mismatched destination view",
-            ));
-        }
-
-        for (row_index, position) in positions.data.iter().enumerate() {
-            let center = position.as_usize();
-            let byte = text.byte(center).unwrap_or_default();
-            let next_non_space = next_non_space(text, center + 1);
-            let row = out.row_mut(row_index);
-            row[0] = bool_to_f32(byte == b'.');
-            row[1] = bool_to_f32(byte == b'!');
-            row[2] = bool_to_f32(byte == b'?');
-            row[3] = bool_to_f32(byte == b'\n');
-            row[4] = bool_to_f32(next_non_space.is_some_and(|value| value.is_ascii_uppercase()));
-            row[5] = bool_to_f32(next_non_space.is_none());
-        }
-        Ok(())
-    }
-}
-
-/// Legal-text-aware boundary heuristics inspired by the original charboundary model family.
-#[derive(Clone, Copy, Debug, Default)]
-pub struct LegalBoundaryHeuristicAppender;
-
-impl LegalBoundaryHeuristicAppender {
-    #[must_use]
-    pub fn new() -> Self {
-        Self
-    }
-}
-
-impl FeatureAppender<f32> for LegalBoundaryHeuristicAppender {
-    fn block(&self) -> FeatureBlock {
-        FeatureBlock::new("legal_boundary_heuristics", 12)
-    }
-
-    fn append_into(
-        &self,
-        text: TextBytes<'_>,
-        positions: CandidateSlice<'_>,
-        mut out: FeatureMatrixViewMut<'_, f32>,
-        _scratch: &mut FeatureScratch,
-    ) -> Result<(), FeatureError> {
-        if out.rows != positions.len() || out.cols != 12 {
-            return Err(FeatureError::new(
-                "legal-boundary heuristic appender got a mismatched destination view",
-            ));
-        }
-
-        for (row_index, position) in positions.data.iter().enumerate() {
-            let center = position.as_usize();
-            let byte = text.byte(center).unwrap_or_default();
-            let prev = text.padded_byte(center as isize - 1);
-            let next = text.padded_byte(center as isize + 1);
-            let next_non_space = next_non_space(text, center + 1);
-            let row = out.row_mut(row_index);
-            row[0] = bool_to_f32(byte == b'.');
-            row[1] = bool_to_f32(matches!(byte, b'.' | b'!' | b'?'));
-            row[2] = bool_to_f32(matches!(byte, b';' | b':' | b'"' | b'\''));
-            row[3] = bool_to_f32(matches!(byte, b'\n' | b'\r'));
-            row[4] = bool_to_f32(looks_like_abbreviation(text, center));
-            row[5] = bool_to_f32(next_non_space.is_some_and(|value| value.is_ascii_uppercase()));
-            row[6] = bool_to_f32(next_non_space.is_some_and(|value| value.is_ascii_lowercase()));
-            row[7] = bool_to_f32(next_non_space.is_none());
-            row[8] = bool_to_f32(near_colon_before(text, center, 20));
-            row[9] = bool_to_f32(semicolon_list_context(text, center));
-            row[10] = bool_to_f32(balanced_quote_context(text, center));
-            row[11] = bool_to_f32(prev.is_ascii_digit() || next.is_ascii_digit());
         }
         Ok(())
     }
@@ -1186,7 +1010,7 @@ impl CompositeFeatureKernel {
         Self::new(vec![
             Box::new(ByteWindowAppender::new(ByteWindowSpec::new(1, 1))),
             Box::new(AsciiClassAppender::new()),
-            Box::new(BoundaryHeuristicAppender::new()),
+            Box::new(BoundaryShapeAppender::new()),
         ])
     }
 
@@ -1196,15 +1020,6 @@ impl CompositeFeatureKernel {
             "format_counts",
             vec![b'<', b'>', b'/', b'=', b',', b'"'],
         ))])
-    }
-
-    #[must_use]
-    pub fn legal_boundary_demo() -> Self {
-        Self::new(vec![
-            Box::new(EncodedByteWindowAppender::new(ByteWindowSpec::new(5, 3))),
-            Box::new(AsciiClassAppender::new()),
-            Box::new(LegalBoundaryHeuristicAppender::new()),
-        ])
     }
 
     #[must_use]
@@ -1251,8 +1066,8 @@ mod tests {
         BoundaryShapeAppender, ByteClass, ByteClassCountAppender, ByteSet256, ByteSetScanner,
         CompositeFeatureKernel, DirectionalByteClassCountAppender,
         DirectionalUnicodeCategoryCountAppender, DirectionalUnicodeCategoryGroupCountAppender,
-        EncodedByteWindowAppender, LegalBoundaryHeuristicAppender, SelectedByteCountAppender,
-        UnicodeCategory, UnicodeCategoryGroup,
+        EncodedByteWindowAppender, SelectedByteCountAppender, UnicodeCategory,
+        UnicodeCategoryGroup,
     };
 
     #[test]
@@ -1275,9 +1090,9 @@ mod tests {
             )
             .expect("feature extraction should succeed");
 
-        assert_eq!(kernel.schema().total_dim(), 15);
+        assert_eq!(kernel.schema().total_dim(), 31);
         assert_eq!(matrix.rows, 2);
-        assert_eq!(matrix.cols, 15);
+        assert_eq!(matrix.cols, 31);
     }
 
     #[test]
@@ -1348,21 +1163,9 @@ mod tests {
     }
 
     #[test]
-    fn legal_boundary_kernel_uses_expected_width() {
-        let kernel = CompositeFeatureKernel::legal_boundary_demo();
-        assert_eq!(kernel.schema().total_dim(), 27);
-    }
-
-    #[test]
     fn encoded_window_appender_uses_expected_width() {
         let appender = EncodedByteWindowAppender::new(ByteWindowSpec::new(5, 3));
         assert_eq!(appender.block().width, 9);
-    }
-
-    #[test]
-    fn legal_heuristic_block_has_expected_width() {
-        let appender = LegalBoundaryHeuristicAppender::new();
-        assert_eq!(appender.block().width, 12);
     }
 
     #[test]

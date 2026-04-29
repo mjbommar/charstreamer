@@ -20,8 +20,8 @@ external model-backend surface centered on Burn.
 - `charstreamer-models-native`: native CPU linear/logistic model primitives.
 - `charstreamer-backend-burn`: Burn-based neural model experiments for CPU
   training and inference.
-- `charstreamer-segmentation`: rule-based semantic segmentation and merged
-  annotation rendering.
+- `charstreamer-segmentation`: model-backed segmentation and merged annotation
+  rendering.
 - `charstreamer-python`: PyO3/maturin extension module for Python access.
 - `charstreamer-experiments`: local experiment runners and reproducibility
   manifests. This crate is not intended for crates.io publication.
@@ -46,10 +46,8 @@ Important model status:
 - `v0.1.1` is the first planned model-backed release. The wheel vendors a
   default Burn shallow-MLP sentence-boundary bundle and loads it automatically
   from `charstreamer.Segmenter.default()`.
-- Structural spans (`paragraph`, `metadata`, `section`, `list_item`,
-  `dialogue`) still use the native deterministic segmenter. Sentence spans use
-  the Burn model when a supported bundle is resolved, otherwise the explicit
-  heuristic fallback remains available.
+- The default runtime must load a supported model bundle. It must not synthesize
+  semantic annotations from hard-coded rules when a model is unavailable.
 
 ## Build And Test
 
@@ -72,7 +70,6 @@ Run focused benchmarks:
 cargo bench -p charstreamer-kernels
 cargo bench -p charstreamer-core
 cargo bench -p charstreamer-models-native
-cargo bench -p charstreamer-segmentation
 ```
 
 Build the Python extension locally:
@@ -87,10 +84,10 @@ Build the release wheel locally:
 ```bash
 python3 tools/model-artifacts/vendor_model.py \
   --require-burn \
-  --archive-out dist/models/charstreamer-default-0.1.1.zip \
-  target/model/charstreamer-default-0.1.1
+  --archive-out dist-models/charstreamer-default-0.1.1.zip \
+  target/model/charstreamer-default-0.1.1-release
 
-uv run --with 'maturin[patchelf]' maturin build \
+uvx --with 'maturin[patchelf]' maturin build \
   --release \
   --manifest-path crates/charstreamer-python/Cargo.toml \
   --out dist
@@ -127,7 +124,7 @@ The usual sequence is:
 
 ```bash
 gh release create v0.1.1 \
-  dist/models/charstreamer-default-0.1.1.zip \
+  dist-models/charstreamer-default-0.1.1.zip \
   --target main \
   --title "CharStreamer v0.1.1" \
   --notes-file CHANGELOG.md
@@ -152,8 +149,8 @@ Current default bundle metrics:
 
 ```text
 engine: burn_shallow_mlp_sentence_v1
-features: encoded_left=15 encoded_right=15 count_radius=64 feature_dim=109 hidden_dim=256
-validation: precision=0.724 recall=0.826 f1=0.767 threshold=0.36
+features: encoded_left=15 encoded_right=15 count_radius=64 feature_dim=97 hidden_dim=128
+validation: precision=0.981 recall=0.973 f1=0.977 threshold=0.59
 ```
 
 ## Quick Examples
@@ -169,11 +166,7 @@ Use from Python:
 ```python
 import charstreamer
 
-text = """# Background
-The court reviewed the invoice. The shipment was late.
-
-- Notice was timely.
-"""
+text = "The court reviewed the invoice. The shipment was late. Notice was timely."
 
 segmenter = charstreamer.Segmenter.default()
 print(segmenter.model_info())
@@ -200,15 +193,12 @@ Example spans and tagged text:
 
 ```python
 [
-    {"label": "section", "start": 0, "end": 12, "start_byte": 0, "end_byte": 12, "score": 0.98},
-    {"label": "paragraph", "start": 0, "end": 67, "start_byte": 0, "end_byte": 67, "score": 1.0},
-    {"label": "sentence", "start": 13, "end": 44, "start_byte": 13, "end_byte": 44, "score": 0.74},
+    {"label": "sentence", "start": 0, "end": 31, "start_byte": 0, "end_byte": 31, "score": 0.99},
+    {"label": "sentence", "start": 32, "end": 54, "start_byte": 32, "end_byte": 54, "score": 0.99},
+    {"label": "sentence", "start": 55, "end": 73, "start_byte": 55, "end_byte": 73, "score": 0.96},
 ]
 
-<|paragraph|><|section|># Background</|section|>
-<|sentence|>The court reviewed the invoice.</|sentence|>
-<|sentence|>The shipment was late.</|sentence|></|paragraph|>
-<|paragraph|><|list_item|>- Notice was timely.</|list_item|></|paragraph|>
+<|sentence|>The court reviewed the invoice.</|sentence|> <|sentence|>The shipment was late.</|sentence|> <|sentence|>Notice was timely.</|sentence|>
 ```
 
 Force model-backed execution in tests or production startup:
@@ -220,15 +210,13 @@ charstreamer.model_info(allow_download=False, require_model=True)
 segmenter = charstreamer.Segmenter.default(require_model=True)
 ```
 
-That call must fail if the wheel is heuristic-only. This is intentional: it
+That call must fail if no supported model is available. This is intentional: it
 prevents silently shipping a package that looks model-backed but is not.
 
-Use the explicit heuristic fallback when you want deterministic rule-only
-behavior:
-
-```python
-segmenter = charstreamer.Segmenter.heuristic()
-```
+The current default model is a sentence-end model. It does not yet include a
+trained sentence-start/outside classifier, so arbitrary document furniture such
+as headings should be handled by a future span/IOB model rather than by
+hard-coded cleanup rules.
 
 Run the narrow boundary pipeline example:
 
@@ -240,13 +228,6 @@ Run the mixed XML/CSV format-switch example:
 
 ```bash
 cargo run -p charstreamer-core --example format_switch
-```
-
-Run the long-document segmentation timing example. If
-`data/bench/war_and_peace.txt` is not present, it uses a synthetic fallback:
-
-```bash
-cargo run --release -p charstreamer-segmentation --example time_once
 ```
 
 ## Data Policy

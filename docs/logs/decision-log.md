@@ -5,8 +5,7 @@
 Context:
 
 - the first PyPI wheel proved packaging but did not vendor a trained Burn model
-- a heuristic-only default path is useful for smoke tests but is misleading as a
-  model-backed public release
+- a model-backed public release must not emit labels from hard-coded rules
 
 Decision:
 
@@ -19,7 +18,6 @@ Decision:
 
 Consequences:
 
-- source and CI builds can still run the heuristic fallback
 - public model releases are blocked until Burn serialization and production
   inference are wired into the runtime
 - the model bundle can be inspected as a GitHub release artifact as well as

@@ -29,8 +29,6 @@ from .validation import (
     SentenceBoundaryValidationError,
     UnitAnnotationValidationError,
     build_sentence_candidates,
-    parse_tagged_text,
-    render_tagged_text,
     validate_sentence_breaks,
     validate_unit_annotations,
 )
@@ -83,8 +81,6 @@ candidate marker.
 """
 
 
-SENTENCE_BOUNDARY_RE = re.compile(r".+?(?:[.!?](?:[\"'”’\])]+)?)(?=\s+|$)", re.DOTALL)
-DIALOGUE_SPAN_RE = re.compile(r"[\"“](.+?)[\"”]", re.DOTALL)
 BLOCK_LABELS = {"section_heading", "paragraph", "dialogue", "list_item", "metadata"}
 SENTENCE_PARENT_LABELS = {"paragraph", "dialogue", "list_item"}
 NONE_LABEL = "none"
@@ -133,7 +129,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--split", default="train")
     parser.add_argument(
         "--provider",
-        choices=("openai", "mock"),
+        choices=("openai",),
         default="openai",
     )
     parser.add_argument("--model", default="gpt-5.4-mini")
@@ -307,8 +303,6 @@ def maybe_load_env_json(path: str | None) -> None:
 
 
 def build_annotator(args: argparse.Namespace) -> "BaseAnnotator":
-    if args.provider == "mock":
-        return MockAnnotator(model_name="mock-heuristic-v1")
     return OpenAIAnnotator(
         model_name=args.model,
         max_attempts=args.max_attempts,
@@ -499,7 +493,7 @@ class OpenAIAnnotator(BaseAnnotator):
     ) -> None:
         if not os.getenv("OPENAI_API_KEY"):
             raise SystemExit(
-                "OPENAI_API_KEY is not set; use --provider mock to validate the pipeline locally"
+                "OPENAI_API_KEY is not set; provide credentials before running annotation"
             )
         self._client = OpenAI()
         self._model_name = model_name
@@ -612,13 +606,8 @@ class OpenAIAnnotator(BaseAnnotator):
                 error_note = "response.output_parsed was empty"
                 continue
             try:
-                refined_units = refine_block_unit_assignments(
-                    parsed.units,
-                    units,
-                    set(block_labels),
-                )
                 spans, validation = validate_unit_annotations(
-                    refined_units,
+                    parsed.units,
                     units,
                     set(block_labels),
                     none_label=NONE_LABEL,
@@ -683,7 +672,7 @@ class OpenAIAnnotator(BaseAnnotator):
                     notes=notes,
                 ),
                 units=units,
-                unit_annotations=refined_units,
+                unit_annotations=parsed.units,
                 sentence_candidates=sentence_candidates,
             )
 
@@ -925,89 +914,6 @@ class OpenAIAnnotator(BaseAnnotator):
         (self._debug_dir / name).write_text(json.dumps(payload, ensure_ascii=False, indent=2))
 
 
-class MockAnnotator(BaseAnnotator):
-    def __init__(self, *, model_name: str) -> None:
-        self._model_name = model_name
-
-    def annotate(
-        self,
-        chunk: TextChunk,
-        labels: list[str],
-    ) -> AnnotationResult:
-        if "sentence" in labels:
-            spans = build_mock_spans(chunk.text, labels)
-            tagged_text = render_tagged_text(chunk.text, spans)
-            _, validation = parse_tagged_text(tagged_text, chunk.text, set(labels))
-            return AnnotationResult(
-                protocol="inline_tags",
-                spans=spans,
-                validation=validation,
-                metadata=AnnotationMetadata(
-                    provider="mock",
-                    model=self._model_name,
-                    attempt=1,
-                    notes=["mock inline-tag heuristic annotator output"],
-                ),
-                tagged_text=tagged_text,
-            )
-
-        units = build_logical_block_units(chunk.text)
-        unit_annotations = build_mock_unit_assignments(units, labels)
-        spans, validation = validate_unit_annotations(
-            unit_annotations,
-            units,
-            set(label for label in labels if label in BLOCK_LABELS),
-            none_label=NONE_LABEL,
-        )
-        return AnnotationResult(
-            protocol="unit_labels",
-            spans=spans,
-            validation=validation,
-            metadata=AnnotationMetadata(
-                provider="mock",
-                model=self._model_name,
-                attempt=1,
-                notes=["mock unit-label heuristic annotator output"],
-            ),
-            units=units,
-            unit_annotations=unit_annotations,
-        )
-
-
-def build_mock_unit_assignments(
-    units: list[TextUnit],
-    labels: list[str],
-) -> list[UnitLabelAssignment]:
-    requested = set(label for label in labels if label in BLOCK_LABELS)
-    assignments: list[UnitLabelAssignment] = []
-    for unit in units:
-        assignments.append(
-            UnitLabelAssignment(
-                unit_id=unit.unit_id,
-                label=pick_mock_block_label(unit.text, requested),
-            )
-        )
-    return assignments
-
-
-def refine_block_unit_assignments(
-    assignments: list[UnitLabelAssignment],
-    units: list[TextUnit],
-    requested_labels: set[str],
-) -> list[UnitLabelAssignment]:
-    unit_map = {unit.unit_id: unit for unit in units}
-    refined: list[UnitLabelAssignment] = []
-    for assignment in assignments:
-        unit = unit_map[assignment.unit_id]
-        refined.append(
-            UnitLabelAssignment(
-                unit_id=assignment.unit_id,
-                label=normalize_block_label(unit.text, assignment.label, requested_labels),
-            )
-        )
-    return refined
-
-
 def should_merge_into_current_block(current_text: str, next_line: str) -> bool:
     current_type = classify_display_type(current_text)
     next_type = classify_display_type(next_line)
@@ -1046,145 +952,6 @@ def starts_continuation_line(text: str) -> bool:
     if not stripped:
         return False
     return bool(re.match(r"^(?:[a-z0-9(\[\"'“‘]|[ivxlcdm]+\.)", stripped))
-
-
-def normalize_block_label(text: str, label: str, requested: set[str]) -> str:
-    stripped = text.strip()
-    if not stripped:
-        return NONE_LABEL
-    if "metadata" in requested and looks_like_metadata_line(stripped):
-        return "metadata"
-    if "section_heading" in requested and looks_like_subject_or_caption_line(stripped):
-        return "section_heading"
-    if "section_heading" in requested and looks_like_heading(stripped):
-        return "section_heading"
-    if "list_item" in requested and looks_like_list_item(stripped):
-        return "list_item"
-    if "dialogue" in requested and looks_like_dialogue_line(stripped):
-        return "dialogue"
-    if label == "paragraph":
-        if "metadata" in requested and looks_like_metadataish_paragraph(stripped):
-            return "metadata"
-        if "section_heading" in requested and looks_like_headingish_paragraph(stripped):
-            return "section_heading"
-    if label not in requested and label != NONE_LABEL:
-        if "paragraph" in requested:
-            return "paragraph"
-        return NONE_LABEL
-    return label
-
-
-def pick_mock_block_label(text: str, requested: set[str]) -> str:
-    stripped = text.strip()
-    if not stripped:
-        return NONE_LABEL
-    if "paragraph" in requested:
-        return normalize_block_label(stripped, "paragraph", requested)
-    return normalize_block_label(stripped, NONE_LABEL, requested)
-
-
-def build_mock_spans(text: str, labels: list[str]) -> list[SpanAnnotation]:
-    requested = set(labels)
-    spans: list[SpanAnnotation] = []
-    next_id = 0
-
-    paragraph_spans = find_paragraph_spans(text)
-    for char_start, char_end in paragraph_spans:
-        paragraph_id = None
-        if "paragraph" in requested:
-            paragraph_id = next_id
-            spans.append(
-                SpanAnnotation(
-                    id=paragraph_id,
-                    label="paragraph",
-                    start=0,
-                    end=0,
-                    char_start=char_start,
-                    char_end=char_end,
-                    parent_id=None,
-                )
-            )
-            next_id += 1
-
-        paragraph_text = text[char_start:char_end]
-        if "section_heading" in requested and looks_like_heading(paragraph_text):
-            spans.append(
-                SpanAnnotation(
-                    id=next_id,
-                    label="section_heading",
-                    start=0,
-                    end=0,
-                    char_start=char_start,
-                    char_end=char_end,
-                    parent_id=paragraph_id,
-                )
-            )
-            next_id += 1
-
-        if "dialogue" in requested:
-            for dialogue_start, dialogue_end in find_dialogue_spans(paragraph_text):
-                spans.append(
-                    SpanAnnotation(
-                        id=next_id,
-                        label="dialogue",
-                        start=0,
-                        end=0,
-                        char_start=char_start + dialogue_start,
-                        char_end=char_start + dialogue_end,
-                        parent_id=paragraph_id,
-                    )
-                )
-                next_id += 1
-
-        if "sentence" in requested:
-            for sentence_start, sentence_end in find_sentence_spans(paragraph_text):
-                spans.append(
-                    SpanAnnotation(
-                        id=next_id,
-                        label="sentence",
-                        start=0,
-                        end=0,
-                        char_start=char_start + sentence_start,
-                        char_end=char_start + sentence_end,
-                        parent_id=paragraph_id,
-                    )
-                )
-                next_id += 1
-
-    byte_offsets = _char_to_byte_offsets(text)
-    return [
-        span.model_copy(
-            update={
-                "start": byte_offsets[span.char_start],
-                "end": byte_offsets[span.char_end],
-            }
-        )
-        for span in spans
-    ]
-
-
-def find_paragraph_spans(text: str) -> list[tuple[int, int]]:
-    spans: list[tuple[int, int]] = []
-    start = 0
-    for match in re.finditer(r"(?:\r?\n){2,}", text):
-        end = match.start()
-        if text[start:end].strip():
-            spans.append((start, end))
-        start = match.end()
-    if text[start:].strip():
-        spans.append((start, len(text)))
-    if not spans and text:
-        spans.append((0, len(text)))
-    return spans
-
-
-def find_sentence_spans(text: str) -> list[tuple[int, int]]:
-    spans: list[tuple[int, int]] = []
-    for match in SENTENCE_BOUNDARY_RE.finditer(text):
-        candidate = match.group(0)
-        if candidate.strip():
-            spans.append((match.start(), match.end()))
-    return spans
 
 
 def looks_like_heading(text: str) -> bool:
@@ -1320,11 +1087,3 @@ def normalized_block_text(text: str) -> str:
 def block_has_sentence_terminal(text: str) -> bool:
     stripped = normalized_block_text(text).rstrip()
     return bool(re.search(r'[.!?](?:["\'”’)\]]+)?$', stripped))
-
-
-def find_dialogue_spans(text: str) -> list[tuple[int, int]]:
-    spans: list[tuple[int, int]] = []
-    for match in DIALOGUE_SPAN_RE.finditer(text):
-        if len(match.group(0).strip()) >= 6:
-            spans.append((match.start(), match.end()))
-    return spans

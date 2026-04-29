@@ -47,7 +47,7 @@ Build the first narrow primitive-first vertical slice end to end:
 - implement baseline `memchr`-backed scanner
 - implement byte-window appender
 - implement ASCII-class appender
-- implement boundary-heuristic appender
+- implement boundary shape feature appender
 - implement composite feature kernel
 
 ### Narrow model and decoder

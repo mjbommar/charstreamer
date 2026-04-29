@@ -390,7 +390,7 @@ distribution.
 5. Run adjudication:
    - stronger model
    - second prompt
-   - or rule-based consistency checks
+   - or schema-level consistency checks
 6. Score label quality with evals.
 7. Promote only high-confidence labels into the training set.
 

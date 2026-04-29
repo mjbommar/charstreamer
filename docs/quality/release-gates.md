@@ -40,7 +40,8 @@ Must pass:
 - deterministic fixed-seed training for native models
 - error messages for malformed inputs are tested
 - model artifacts validate before packaging
-- the default Python path reports whether it is model-backed or heuristic
+- the vendored default Python path loads offline
+- the Python runtime fails rather than annotating when no supported model is available
 
 ### G4: Performance gate
 

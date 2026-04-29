@@ -19,13 +19,12 @@ use charstreamer_core::{
     split_documents,
 };
 use charstreamer_kernels::{
-    AsciiClassAppender, BoundaryHeuristicAppender, ByteClass, ByteClassCountAppender, ByteSet256,
-    ByteSetScanner, ByteWindowAppender, CharBoundaryLegacyAppender, CompositeFeatureKernel,
+    AsciiClassAppender, ByteClass, ByteClassCountAppender, ByteSet256, ByteSetScanner,
+    ByteWindowAppender, CharBoundaryLegacyAppender, CompositeFeatureKernel,
     DirectionalByteClassCountAppender, DirectionalUnicodeCategoryCountAppender,
     DirectionalUnicodeCategoryGroupCountAppender, EncodedByteWindowAppender, LegacyFeatureTables,
-    LegalBoundaryHeuristicAppender, LineByteCountAppender, LineStartScanner,
-    SelectedByteCountAppender, StrideScanner, UnicodeCategory, UnicodeCategoryGroup,
-    Utf8CharSetScanner,
+    LineByteCountAppender, LineStartScanner, SelectedByteCountAppender, StrideScanner,
+    UnicodeCategory, UnicodeCategoryGroup, Utf8CharSetScanner,
 };
 use charstreamer_models_native::{
     LogisticFitOptions, LogisticFitReport, LogisticModel, ModelIoError,
@@ -149,8 +148,6 @@ pub enum FeatureComponentSpec {
         right: usize,
     },
     AsciiNeighborClasses,
-    BoundaryHeuristics,
-    LegalBoundaryHeuristics,
     SelectedByteCounts {
         left: usize,
         right: usize,
@@ -781,12 +778,6 @@ pub fn compile_feature_kernel(
             }
             FeatureComponentSpec::AsciiNeighborClasses => {
                 appenders.push(Box::new(AsciiClassAppender::new()))
-            }
-            FeatureComponentSpec::BoundaryHeuristics => {
-                appenders.push(Box::new(BoundaryHeuristicAppender::new()))
-            }
-            FeatureComponentSpec::LegalBoundaryHeuristics => {
-                appenders.push(Box::new(LegalBoundaryHeuristicAppender::new()))
             }
             FeatureComponentSpec::SelectedByteCounts { left, right, bytes } => {
                 appenders.push(Box::new(SelectedByteCountAppender::new(

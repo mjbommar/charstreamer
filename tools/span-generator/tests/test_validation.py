@@ -1,11 +1,9 @@
 from charstreamer_span_generator.cli import (
     block_has_sentence_terminal,
     build_logical_block_units,
-    build_mock_spans,
     is_sentence_eligible_block,
     looks_like_dialogue_line,
     looks_like_list_item,
-    normalize_block_label,
 )
 from charstreamer_span_generator.models import UnitLabelAssignment
 from charstreamer_span_generator.validation import (
@@ -73,24 +71,6 @@ def test_parse_rejects_text_changes() -> None:
         assert "round-trip" in str(exc)
     else:
         raise AssertionError("expected deterministic validation failure")
-
-
-def test_mock_annotator_spans_roundtrip() -> None:
-    text = (
-        "SECTION ONE\n\n"
-        "\"Hello there,\" she said. \"How are you?\"\n\n"
-        "Another paragraph follows."
-    )
-    spans = build_mock_spans(text, ["section_heading", "paragraph", "sentence", "dialogue"])
-    tagged = render_tagged_text(text, spans)
-    parsed, validation = parse_tagged_text(
-        tagged,
-        text,
-        {"section_heading", "paragraph", "sentence", "dialogue"},
-    )
-    assert validation.exact_roundtrip
-    assert any(span.label == "section_heading" for span in parsed)
-    assert any(span.label == "paragraph" for span in parsed)
 
 
 def test_validate_unit_annotations_merges_adjacent_units() -> None:
@@ -207,15 +187,6 @@ def test_sentence_candidates_skip_legal_abbreviations() -> None:
     assert len(candidates) == 1
     assert "<<<BREAK>>>" in markers[0]
     assert "remanded." in markers[0]
-
-
-def test_normalize_block_label_relabels_subject_lines() -> None:
-    label = normalize_block_label(
-        "Subject: Request for production",
-        "paragraph",
-        {"section_heading", "paragraph", "metadata"},
-    )
-    assert label == "section_heading"
 
 
 def test_sentence_eligible_block_rejects_subject_lines() -> None:

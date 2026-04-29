@@ -112,7 +112,7 @@ class ValidationReport(BaseModel):
 
 
 class AnnotationMetadata(BaseModel):
-    provider: Literal["openai", "mock"]
+    provider: Literal["openai"]
     model: str
     attempt: int
     response_id: str | None = None

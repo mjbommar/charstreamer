@@ -43,6 +43,7 @@ def main() -> int:
         manifest = load_manifest(root)
         validate_manifest(root, manifest, require_burn=args.require_burn)
         vendor(root, args.dest)
+        normalize_manifest(args.dest)
         if args.archive_out:
             write_archive(args.dest, args.archive_out)
     finally:
@@ -145,6 +146,33 @@ def vendor(root: Path, dest: Path) -> None:
             shutil.copytree(child, target)
         else:
             shutil.copy2(child, target)
+
+
+def normalize_manifest(root: Path) -> None:
+    manifest = load_manifest(root)
+    files = manifest.get("files")
+    if not isinstance(files, list):
+        raise SystemExit("manifest files must be a list")
+
+    for file_info in files:
+        if not isinstance(file_info, dict):
+            raise SystemExit("manifest file entries must be objects")
+        rel_path = file_info.get("path")
+        if not isinstance(rel_path, str) or not rel_path:
+            raise SystemExit("manifest file entry missing path")
+        path = Path(rel_path)
+        if path.is_absolute() or ".." in path.parts:
+            raise SystemExit(f"unsafe manifest file path: {rel_path}")
+        file_path = root / path
+        if not file_path.is_file():
+            raise SystemExit(f"manifest file missing after vendoring: {rel_path}")
+        file_info["bytes"] = file_path.stat().st_size
+        file_info["sha256"] = sha256(file_path)
+
+    (root / "manifest.json").write_text(
+        json.dumps(manifest, indent=2, sort_keys=True) + "\n",
+        encoding="utf-8",
+    )
 
 
 def write_archive(root: Path, archive_out: Path) -> None:

@@ -73,7 +73,7 @@ fn main() -> Result<(), Box<dyn Error>> {
     let (train_docs, valid_docs) = split_documents(documents, 9, 10);
 
     let scanner = ByteSetScanner::new(ByteSet256::from_bytes(b".?!;:\"'\n\r"));
-    let kernel = CompositeFeatureKernel::legal_boundary_demo();
+    let kernel = CompositeFeatureKernel::boundary_demo();
 
     let dataset_options = BoundaryDatasetBuildOptions {
         negative_keep_rate: 1.0,
@@ -104,7 +104,7 @@ fn main() -> Result<(), Box<dyn Error>> {
 
     let pipeline = Pipeline::new(
         ByteSetScanner::new(ByteSet256::from_bytes(b".?!;:\"'\n\r")),
-        CompositeFeatureKernel::legal_boundary_demo(),
+        CompositeFeatureKernel::boundary_demo(),
         model.clone(),
         ThresholdSpanDecoder::new(threshold),
     );

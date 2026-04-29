@@ -22,8 +22,7 @@ use charstreamer_core::{
 use charstreamer_kernels::{
     AsciiClassAppender, BoundaryShapeAppender, ByteClass, CompositeFeatureKernel,
     DirectionalByteClassCountAppender, DirectionalUnicodeCategoryGroupCountAppender,
-    EncodedByteWindowAppender, LegalBoundaryHeuristicAppender, LineByteCountAppender,
-    UnicodeCategoryGroup,
+    EncodedByteWindowAppender, LineByteCountAppender, UnicodeCategoryGroup,
 };
 use rand::rngs::SmallRng;
 use rand::seq::SliceRandom;
@@ -577,7 +576,6 @@ fn build_kernel(config: &Config) -> CompositeFeatureKernel {
             config.encoded_right,
         ))),
         Box::new(AsciiClassAppender::new()),
-        Box::new(LegalBoundaryHeuristicAppender::new()),
         Box::new(BoundaryShapeAppender::new()),
         Box::new(DirectionalByteClassCountAppender::new(
             "directional_byte_class_counts",

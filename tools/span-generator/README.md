@@ -42,9 +42,8 @@ most records, then falls back to arbitrary random windows. Use
 Use `--label-strategy round-robin` for balanced synthetic generation. In this
 mode each row focuses on one label, cycles through `--target-labels`, and asks
 the LLM to tag visible spans for that focus label, including partial spans at
-target edges. Candidate-window heuristics only choose likely text regions; the
-LLM still performs the annotation and local validation still derives all
-offsets.
+target edges. Candidate windows only choose source regions for annotation; the
+LLM still performs the labeling and local validation still derives all offsets.
 
 Labels can overlap across focused passes. For example, the same bytes can be a
 `paragraph` span in one pass and contain `sentence` spans in another pass. The

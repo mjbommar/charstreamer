@@ -17,8 +17,7 @@
         "right": 3
       }
     },
-    "AsciiNeighborClasses",
-    "LegalBoundaryHeuristics"
+    "AsciiNeighborClasses"
   ],
   "model": {
     "NativeLogistic": {

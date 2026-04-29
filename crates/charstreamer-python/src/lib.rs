@@ -2,7 +2,7 @@ use std::time::Instant;
 use std::{collections::HashMap, collections::HashSet};
 
 use charstreamer_segmentation::{
-    AnnotationSpan, BurnSentenceSegmenter, CombinedSegmenter, Label, SegmenterConfig, render_spans,
+    AnnotationSpan, BurnSentenceSegmenter, Label, SegmenterConfig, render_spans,
 };
 use pyo3::prelude::*;
 use pyo3::types::{PyDict, PyList};
@@ -11,19 +11,7 @@ use pyo3::types::{PyDict, PyList};
 #[derive(Clone, Debug)]
 struct PySegmenterConfig {
     #[pyo3(get, set)]
-    include_paragraphs: bool,
-    #[pyo3(get, set)]
     include_sentences: bool,
-    #[pyo3(get, set)]
-    include_metadata: bool,
-    #[pyo3(get, set)]
-    include_sections: bool,
-    #[pyo3(get, set)]
-    include_list_items: bool,
-    #[pyo3(get, set)]
-    include_dialogue: bool,
-    #[pyo3(get, set)]
-    suppress_sentences_in_structural_spans: bool,
     #[pyo3(get, set)]
     min_span_bytes: usize,
 }
@@ -31,35 +19,13 @@ struct PySegmenterConfig {
 #[pymethods]
 impl PySegmenterConfig {
     #[new]
-    #[allow(clippy::too_many_arguments)]
     #[pyo3(signature = (
-        include_paragraphs=true,
         include_sentences=true,
-        include_metadata=true,
-        include_sections=true,
-        include_list_items=true,
-        include_dialogue=true,
-        suppress_sentences_in_structural_spans=true,
         min_span_bytes=1
     ))]
-    fn new(
-        include_paragraphs: bool,
-        include_sentences: bool,
-        include_metadata: bool,
-        include_sections: bool,
-        include_list_items: bool,
-        include_dialogue: bool,
-        suppress_sentences_in_structural_spans: bool,
-        min_span_bytes: usize,
-    ) -> Self {
+    fn new(include_sentences: bool, min_span_bytes: usize) -> Self {
         Self {
-            include_paragraphs,
             include_sentences,
-            include_metadata,
-            include_sections,
-            include_list_items,
-            include_dialogue,
-            suppress_sentences_in_structural_spans,
             min_span_bytes,
         }
     }
@@ -73,13 +39,7 @@ impl PySegmenterConfig {
 impl From<SegmenterConfig> for PySegmenterConfig {
     fn from(value: SegmenterConfig) -> Self {
         Self {
-            include_paragraphs: value.include_paragraphs,
             include_sentences: value.include_sentences,
-            include_metadata: value.include_metadata,
-            include_sections: value.include_sections,
-            include_list_items: value.include_list_items,
-            include_dialogue: value.include_dialogue,
-            suppress_sentences_in_structural_spans: value.suppress_sentences_in_structural_spans,
             min_span_bytes: value.min_span_bytes,
         }
     }
@@ -88,46 +48,34 @@ impl From<SegmenterConfig> for PySegmenterConfig {
 impl From<&PySegmenterConfig> for SegmenterConfig {
     fn from(value: &PySegmenterConfig) -> Self {
         Self {
-            include_paragraphs: value.include_paragraphs,
             include_sentences: value.include_sentences,
-            include_metadata: value.include_metadata,
-            include_sections: value.include_sections,
-            include_list_items: value.include_list_items,
-            include_dialogue: value.include_dialogue,
-            suppress_sentences_in_structural_spans: value.suppress_sentences_in_structural_spans,
             min_span_bytes: value.min_span_bytes,
         }
     }
 }
 
-#[derive(Debug)]
-enum SegmenterInner {
-    Heuristic(CombinedSegmenter),
-    BurnSentence(Box<BurnSentenceSegmenter>),
-}
-
 #[pyclass(name = "Segmenter", unsendable)]
 #[derive(Debug)]
 struct PySegmenter {
-    inner: SegmenterInner,
+    inner: Box<BurnSentenceSegmenter>,
 }
 
 #[pymethods]
 impl PySegmenter {
     #[new]
     #[pyo3(signature = (config=None))]
-    fn new(config: Option<&PySegmenterConfig>) -> Self {
-        let config = config.map_or_else(SegmenterConfig::default, SegmenterConfig::from);
-        Self {
-            inner: SegmenterInner::Heuristic(CombinedSegmenter::new(config)),
-        }
+    fn new(config: Option<&PySegmenterConfig>) -> PyResult<Self> {
+        let _ = config;
+        Err(pyo3::exceptions::PyRuntimeError::new_err(
+            "Segmenter requires a model bundle; use Segmenter.from_model_dir() or charstreamer.Segmenter.default()",
+        ))
     }
 
     #[staticmethod]
-    fn default() -> Self {
-        Self {
-            inner: SegmenterInner::Heuristic(CombinedSegmenter::default()),
-        }
+    fn default() -> PyResult<Self> {
+        Err(pyo3::exceptions::PyRuntimeError::new_err(
+            "native default construction is disabled; use the Python charstreamer.Segmenter.default() model resolver",
+        ))
     }
 
     #[staticmethod]
@@ -140,23 +88,17 @@ impl PySegmenter {
             ))
         })?;
         Ok(Self {
-            inner: SegmenterInner::BurnSentence(Box::new(segmenter)),
+            inner: Box::new(segmenter),
         })
     }
 
     fn spans<'py>(&self, py: Python<'py>, text: &str) -> PyResult<Bound<'py, PyList>> {
-        let spans = match &self.inner {
-            SegmenterInner::Heuristic(inner) => inner.spans(text),
-            SegmenterInner::BurnSentence(inner) => inner.spans(text).map_err(model_error)?,
-        };
+        let spans = self.inner.spans(text).map_err(model_error)?;
         spans_to_pylist(py, text, &spans)
     }
 
     fn annotate<'py>(&self, py: Python<'py>, text: &str) -> PyResult<Bound<'py, PyDict>> {
-        let annotation = match &self.inner {
-            SegmenterInner::Heuristic(inner) => inner.annotate(text),
-            SegmenterInner::BurnSentence(inner) => inner.annotate(text).map_err(model_error)?,
-        };
+        let annotation = self.inner.annotate(text).map_err(model_error)?;
         let dict = PyDict::new(py);
         dict.set_item("tagged", annotation.tagged)?;
         dict.set_item("spans", spans_to_pylist(py, text, &annotation.spans)?)?;
@@ -164,12 +106,7 @@ impl PySegmenter {
     }
 
     fn tagged(&self, text: &str) -> PyResult<String> {
-        Ok(match &self.inner {
-            SegmenterInner::Heuristic(inner) => inner.annotate(text).tagged,
-            SegmenterInner::BurnSentence(inner) => {
-                inner.annotate(text).map_err(model_error)?.tagged
-            }
-        })
+        Ok(self.inner.annotate(text).map_err(model_error)?.tagged)
     }
 
     #[pyo3(signature = (text, iterations=10))]
@@ -184,10 +121,7 @@ impl PySegmenter {
         let mut span_count = 0_usize;
         let mut tagged_bytes = 0_usize;
         for _ in 0..iterations {
-            let annotation = match &self.inner {
-                SegmenterInner::Heuristic(inner) => inner.annotate(text),
-                SegmenterInner::BurnSentence(inner) => inner.annotate(text).map_err(model_error)?,
-            };
+            let annotation = self.inner.annotate(text).map_err(model_error)?;
             span_count = annotation.spans.len();
             tagged_bytes = annotation.tagged.len();
         }
@@ -221,17 +155,28 @@ impl PySegmenter {
 
 #[pyfunction]
 fn annotate<'py>(py: Python<'py>, text: &str) -> PyResult<Bound<'py, PyDict>> {
-    PySegmenter::default().annotate(py, text)
+    let _ = py;
+    let _ = text;
+    Err(pyo3::exceptions::PyRuntimeError::new_err(
+        "native annotate() requires a model bundle; use charstreamer.annotate() from the Python wrapper",
+    ))
 }
 
 #[pyfunction]
 fn spans<'py>(py: Python<'py>, text: &str) -> PyResult<Bound<'py, PyList>> {
-    PySegmenter::default().spans(py, text)
+    let _ = py;
+    let _ = text;
+    Err(pyo3::exceptions::PyRuntimeError::new_err(
+        "native spans() requires a model bundle; use charstreamer.spans() from the Python wrapper",
+    ))
 }
 
 #[pyfunction]
 fn tagged(text: &str) -> PyResult<String> {
-    PySegmenter::default().tagged(text)
+    let _ = text;
+    Err(pyo3::exceptions::PyRuntimeError::new_err(
+        "native tagged() requires a model bundle; use charstreamer.tagged() from the Python wrapper",
+    ))
 }
 
 #[pyfunction]

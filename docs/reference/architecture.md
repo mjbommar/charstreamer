@@ -202,8 +202,8 @@ The primitive layer should contain:
 
 The task layer should contain:
 
-- default sentence-boundary scanners
-- task-specific heuristic blocks
+- model-driven candidate scanners
+- task-specific feature blocks
 - threshold presets
 - output adapters
 
@@ -251,7 +251,7 @@ Use this when features need:
 
 - Unicode case/category information
 - non-ASCII quote or punctuation logic
-- language-specific codepoint-aware heuristics
+- language-specific Unicode features
 - Python-facing character spans
 
 Properties:
@@ -304,8 +304,8 @@ Avoid these shapes:
 The first production-quality target should be a generic boundary detector:
 
 - input: `&[u8]` or `&str`
-- candidate scanner: punctuation / quote / newline byteset
-- feature kernel: reusable appenders for byte windows, ASCII classes, and heuristic channels
+- candidate scanner: dense byte/scalar positions or explicitly configured candidate sources
+- feature kernel: reusable appenders for byte windows, ASCII classes, and Unicode/shape channels
 - model: logistic regression or shallow tree ensemble
 - decoder: threshold + post-rules -> boundary byte spans
 
@@ -351,15 +351,15 @@ borrowing the same design pattern.
 
 ## Feature extraction strategy
 
-`charboundary` currently computes windows plus a few heuristic flags. The Rust
-version should treat those heuristics as one `FeatureKernel`, not as the entire
-system.
+Prior `charboundary` models mixed windows with hand-authored flags. CharStreamer
+must not emit labels from hard-coded rules; any task signal should be learned
+from feature blocks through a trained model.
 
 Recommended feature kernel families:
 
 - `EncodedByteWindowKernel`
 - `AsciiClassWindowKernel`
-- `BoundaryHeuristicKernel`
+- `BoundaryShapeKernel`
 - `Utf8CategoryKernel`
 - `NgramHashKernel`
 
@@ -423,8 +423,7 @@ Why:
 
 Use for:
 
-- rule-like problems where interactions matter
-- cases where handcrafted heuristics have important nonlinear effects
+- problems where feature interactions matter
 
 Recommendation:
 

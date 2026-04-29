@@ -64,7 +64,7 @@ impl<'a> LegacyCharText<'a> {
 }
 
 /// Character-aware parity appender matching the original `charboundary` feature family:
-/// encoded window plus 8 heuristic channels.
+/// encoded window plus 8 legacy channels.
 #[derive(Clone, Debug)]
 pub struct CharBoundaryLegacyAppender {
     left_window: usize,

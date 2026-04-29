@@ -62,9 +62,8 @@ class Segmenter:
     """High-level segmenter facade.
 
     ``default()`` resolves the configured model artifact before constructing the
-    Rust segmenter. A supported Burn bundle is loaded into the native runtime;
-    otherwise the facade falls back to the native heuristic implementation unless
-    ``require_model=True`` is passed.
+    Rust segmenter. A supported Burn bundle is required; the package does not
+    synthesize annotations from rule code when no model is available.
     """
 
     def __init__(
@@ -72,7 +71,7 @@ class Segmenter:
         config: SegmenterConfig | None = None,
         *,
         model: ModelResolution | None = None,
-        require_model: bool = False,
+        require_model: bool = True,
     ) -> None:
         self._model = model or _resolve_default_model(allow_download=False)
         if _model_runtime_available(self._model):
@@ -80,9 +79,7 @@ class Segmenter:
                 raise RuntimeError("resolved model is missing a local path")
             self._inner = _native.Segmenter.from_model_dir(self._model.path, config)
             return
-        if require_model:
-            raise RuntimeError(_missing_model_runtime_message(self._model))
-        self._inner = _native.Segmenter(config)
+        raise RuntimeError(_missing_model_runtime_message(self._model))
 
     @classmethod
     def default(
@@ -90,22 +87,10 @@ class Segmenter:
         config: SegmenterConfig | None = None,
         *,
         allow_download: bool | None = None,
-        require_model: bool = False,
+        require_model: bool = True,
     ) -> "Segmenter":
         model = _resolve_default_model(allow_download=allow_download)
         return cls(config, model=model, require_model=require_model)
-
-    @classmethod
-    def heuristic(cls, config: SegmenterConfig | None = None) -> "Segmenter":
-        return cls(
-            config,
-            model=ModelResolution(
-                resolved=False,
-                source="heuristic",
-                path=None,
-                manifest=None,
-            ),
-        )
 
     def model_info(self) -> dict[str, Any]:
         return self._model.to_dict()
@@ -159,7 +144,7 @@ def _model_runtime_available(resolution: ModelResolution) -> bool:
 def _runtime_name(resolution: ModelResolution) -> str:
     if _model_runtime_available(resolution):
         return "burn_sentence_boundary"
-    return "native_heuristic"
+    return "unavailable"
 
 
 def _missing_model_runtime_message(resolution: ModelResolution) -> str:
@@ -202,9 +187,10 @@ def _resolve_default_model(*, allow_download: bool | None) -> ModelResolution:
 
     return ModelResolution(
         resolved=False,
-        source="heuristic",
+        source="unresolved",
         path=None,
         manifest=None,
+        error="no model artifact resolved",
     )
 
 

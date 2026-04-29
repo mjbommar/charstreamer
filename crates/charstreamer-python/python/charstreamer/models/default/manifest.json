@@ -1,0 +1,73 @@
+{
+  "engine": "burn_shallow_mlp_sentence_v1",
+  "features": {
+    "count_radius": 64,
+    "encoded_left": 15,
+    "encoded_right": 15,
+    "feature_dim": 97,
+    "hidden_dim": 128
+  },
+  "files": [
+    {
+      "bytes": 51153,
+      "path": "sentence_boundary.mpk",
+      "role": "sentence_boundary",
+      "sha256": "357380e5c1173d59a6daa488c382e7b14af316b0964ab3dc75b184411aaa1b76"
+    }
+  ],
+  "format": "charstreamer.model-bundle.v1",
+  "metrics": {
+    "train": {
+      "accuracy": 0.988499104976654,
+      "f1": 0.9821361899375916,
+      "false_negatives": 2312,
+      "false_positives": 2236,
+      "precision": 0.9824295043945312,
+      "recall": 0.9818431735038757,
+      "true_negatives": 265877,
+      "true_positives": 125023
+    },
+    "validation": {
+      "accuracy": 0.9853371381759644,
+      "f1": 0.9772680401802063,
+      "false_negatives": 847,
+      "false_positives": 592,
+      "precision": 0.9812206625938416,
+      "recall": 0.9733471870422363,
+      "true_negatives": 65768,
+      "true_positives": 30932
+    }
+  },
+  "name": "charstreamer-default",
+  "task": "sentence_boundary",
+  "thresholds": {
+    "sentence.end": 0.5899999737739563
+  },
+  "training": {
+    "fit_report": {
+      "batch_size": 2048,
+      "cols": 97,
+      "epochs": 24,
+      "hidden_dim": 128,
+      "learning_rate": 0.0008,
+      "rows": 395448,
+      "seed": 29
+    },
+    "stats": {
+      "candidate_count": 493587,
+      "negative_keep_rate": 0.019999999552965164,
+      "positive_candidate_count": 159114,
+      "records_seen": 50284,
+      "records_used": 50284,
+      "records_without_candidates": 0,
+      "train_negative_rows": 268113,
+      "train_positive_rows": 127335,
+      "train_rows": 395448,
+      "unmatched_positive_boundaries": 0,
+      "validation_negative_rows": 66360,
+      "validation_positive_rows": 31779,
+      "validation_rows": 98139
+    }
+  },
+  "version": "0.1.1"
+}

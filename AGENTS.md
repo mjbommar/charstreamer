@@ -82,6 +82,18 @@ Keep the architecture organized around:
 `build_windows` is conceptual only. The hot path should not require materialized
 window objects.
 
+### Model output integrity
+
+- Do not implement hard-coded semantic annotation rules.
+- Do not ship rule-generated labels behind a model-backed API.
+- Do not add "temporary" rule fallbacks for `paragraph`, `section`,
+  `metadata`, `list_item`, `dialogue`, sentence boundaries, or future labels.
+- If no trained model supports a label, the library must not emit that label.
+- Baselines or candidate generators must be explicitly named as such, isolated
+  from default inference, and approved before implementation.
+- If a shortcut would make a demo look better without being a trained model,
+  stop and document the gap instead of coding it.
+
 ### Experiment discipline
 
 When comparing prior vs current implementations:

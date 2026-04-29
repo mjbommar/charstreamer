@@ -2,8 +2,9 @@
 
 ## Goal
 
-Ship a PyPI wheel whose default hello-world path runs a trained model, not a
-silent heuristic fallback.
+Ship a PyPI wheel whose default hello-world path runs a trained model. If no
+supported model is available, annotation must fail instead of emitting labels
+from hard-coded rules.
 
 ## Tasks
 
@@ -13,11 +14,11 @@ silent heuristic fallback.
    format, preferably named msgpack or compact binary.
 3. [x] Persist thresholds, feature configuration, validation metrics, and
    model payload metadata into `manifest.json`.
-4. [x] Add Rust inference APIs that load the bundle and produce the same standoff
-   span contract as `CombinedSegmenter`.
+4. [x] Add Rust inference APIs that load the bundle and produce the standoff
+   span contract without rule-generated labels.
 5. [x] Expose the model-backed segmenter through PyO3 and make Python
    `Segmenter.default(require_model=True)` succeed for the vendored bundle.
-6. [ ] Add parity tests proving model bundle load, inference, and rendering work in
+6. [x] Add parity tests proving model bundle load, inference, and rendering work in
    Rust and Python.
 7. [x] Build the wheel with `vendor_model.py`, validate it with
    `check_wheel_model.py`, and run the offline hello-world smoke test.
@@ -27,16 +28,19 @@ silent heuristic fallback.
 
 - Runtime engine: `burn_shallow_mlp_sentence_v1`.
 - Feature config: `encoded_left=15`, `encoded_right=15`, `count_radius=64`,
-  `feature_dim=109`, `hidden_dim=256`.
+  `feature_dim=97`, `hidden_dim=128`.
 - Training command: `cargo run --release -p charstreamer-segmentation --example train_sentence_burn`.
-- Current validation metrics: precision `0.724`, recall `0.826`, F1 `0.767`,
-  threshold `0.36`.
+- Release candidate bundle: `target/model/charstreamer-default-0.1.1-release`.
+- Training data: ALEA legal benchmark train JSONL plus corrected generated
+  KL3M span JSONL inputs.
+- Validation metrics: precision `0.9812`, recall `0.9733`, F1 `0.9773`,
+  threshold `0.59`.
 - Wheel gate passed locally for `dist/charstreamer-0.1.1-cp39-abi3-manylinux_2_34_x86_64.whl`.
 
-The remaining release risk is data/model quality, not packaging. The current
-model is sufficient to prove the production Burn artifact path, but broader
-semantic segmentation should get its own multi-label model bundle instead of
-overloading this sentence-boundary slice.
+The remaining release risk is model quality on document furniture. The current
+runtime is a sentence-end model, not a sentence-start/outside or multi-label
+semantic span model. Broader semantic segmentation requires its own trained
+multi-label bundle.
 
 ## Non-Negotiable Gate
 

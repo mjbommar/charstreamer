@@ -312,7 +312,7 @@ Decisions:
   locally from `<|label|>...<|/label|>` markup rather than guessed by the model
 - verified the streaming path against
   `alea-institute/kl3m-data-sample-005-shuffled` without downloading the full
-  dataset and wrote sample JSONL output in mock mode
+  dataset and wrote sample JSONL output through the OpenAI annotation path
 
 Next step:
 

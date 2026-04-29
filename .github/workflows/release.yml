@@ -59,15 +59,15 @@ jobs:
         env:
           MODEL_ARTIFACT_URL: ${{ inputs.model_artifact_url }}
         run: |
-          mkdir -p dist/models
+          mkdir -p dist-models
           if [[ -z "$MODEL_ARTIFACT_URL" ]]; then
             MODEL_ARTIFACT_URL="https://github.com/${GITHUB_REPOSITORY}/releases/download/${{ steps.release.outputs.tag }}/charstreamer-default-${{ steps.release.outputs.version }}.zip"
           fi
-          curl -fsSL "$MODEL_ARTIFACT_URL" -o "dist/models/charstreamer-default-${{ steps.release.outputs.version }}.zip"
+          curl -fsSL "$MODEL_ARTIFACT_URL" -o "dist-models/charstreamer-default-${{ steps.release.outputs.version }}.zip"
           python3 tools/model-artifacts/vendor_model.py \
             --require-burn \
-            --archive-out "dist/models/charstreamer-default-${{ steps.release.outputs.version }}.zip" \
-            "dist/models/charstreamer-default-${{ steps.release.outputs.version }}.zip"
+            --archive-out "dist-models/charstreamer-default-${{ steps.release.outputs.version }}.zip" \
+            "dist-models/charstreamer-default-${{ steps.release.outputs.version }}.zip"
 
       - name: Build wheel
         run: uvx maturin build --release --manifest-path crates/charstreamer-python/Cargo.toml --out dist
@@ -108,8 +108,8 @@ jobs:
           RELEASE_TAG: ${{ steps.release.outputs.tag }}
         run: |
           assets=(dist/*.whl)
-          if compgen -G "dist/models/*.zip" > /dev/null; then
-            assets+=(dist/models/*.zip)
+          if compgen -G "dist-models/*.zip" > /dev/null; then
+            assets+=(dist-models/*.zip)
           fi
           if gh release view "$RELEASE_TAG" >/dev/null 2>&1; then
             gh release upload "$RELEASE_TAG" "${assets[@]}" --clobber

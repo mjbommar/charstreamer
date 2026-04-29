@@ -392,7 +392,7 @@ Source reports:
 Configuration:
 
 - model: Burn CPU `NdArray` MLP, hidden dims `128/64`, `32` epochs, batch `1024`
-- features: encoded byte window `7/7`, ASCII classes, legal boundary heuristics, reusable `BoundaryShapeAppender`, directional byte-class counts radius `24`, directional Unicode group counts radius `24`, line-structure counts
+- features: encoded byte window `7/7`, ASCII classes, reusable `BoundaryShapeAppender`, directional byte-class counts radius `24`, directional Unicode group counts radius `24`, line-structure counts
 - candidate contract: sentence candidates are terminal punctuation candidates with trailing quote/bracket absorption; paragraph decoding is masked to paragraph-eligible candidates such as blank-line boundaries, document end, and gold paragraph ends during validation
 - environment: `OPENBLAS_NUM_THREADS=1`, `OMP_NUM_THREADS=1`, `MKL_NUM_THREADS=1`
 

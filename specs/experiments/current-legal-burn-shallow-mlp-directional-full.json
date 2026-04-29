@@ -28,7 +28,6 @@
       }
     },
     "AsciiNeighborClasses",
-    "LegalBoundaryHeuristics",
     {
       "DirectionalByteClassCounts": {
         "left": 12,

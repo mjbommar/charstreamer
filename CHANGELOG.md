@@ -9,8 +9,7 @@ Included:
 
 - default `burn_shallow_mlp_sentence_v1` sentence-boundary model bundle
 - Burn named-msgpack save/load support for the shallow MLP backend
-- Rust `BurnSentenceSegmenter` that combines model-backed sentence boundaries
-  with deterministic structural spans
+- Rust `BurnSentenceSegmenter` for model-backed sentence spans only
 - PyO3/Python `Segmenter.default(require_model=True)` model-backed runtime
 - Rust training/export example for the default sentence-boundary bundle
 - wheel/model validation gates and offline smoke tests
@@ -18,9 +17,10 @@ Included:
 
 Known status:
 
-- structural semantic labels remain deterministic heuristics in this release
 - the default model is a narrow production slice, not the final multi-label
   semantic segmentation model
+- structural semantic labels are not emitted until they have trained model
+  support
 
 ## 0.1.0 - Initial Public Checkpoint
 

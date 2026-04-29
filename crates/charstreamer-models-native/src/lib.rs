@@ -138,15 +138,6 @@ impl LogisticModel {
             weights[block.offset + 5] = -1.25;
         }
 
-        if let Some(block) = schema.block("boundary_heuristics") {
-            weights[block.offset] = 1.60;
-            weights[block.offset + 1] = 3.00;
-            weights[block.offset + 2] = 3.00;
-            weights[block.offset + 3] = 3.50;
-            weights[block.offset + 4] = 2.10;
-            weights[block.offset + 5] = 3.25;
-        }
-
         Self {
             bias: -2.40,
             weights,
@@ -629,7 +620,7 @@ mod tests {
         let model = LogisticModel::new(-0.5, vec![0.25, 1.25, -0.75]);
         let schema = FeatureSchema::new(vec![
             charstreamer_core::FeatureBlock::new("window", 2).with_offset(0),
-            charstreamer_core::FeatureBlock::new("heuristics", 1).with_offset(2),
+            charstreamer_core::FeatureBlock::new("extra", 1).with_offset(2),
         ]);
         let bytes = model
             .to_json_vec_with_schema(&schema)
@@ -647,7 +638,7 @@ mod tests {
                     width: 2
                 },
                 ArtifactFeatureBlock {
-                    name: "heuristics".to_string(),
+                    name: "extra".to_string(),
                     offset: 2,
                     width: 1
                 }

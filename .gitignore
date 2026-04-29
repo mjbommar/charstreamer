@@ -1,5 +1,6 @@
 /target/
 /dist/
+/dist-models/
 
 # Local Python environments and caches
 .venv/

@@ -195,7 +195,7 @@ Responsibilities:
 Design rule:
 
 - models should only know about feature matrices and labels
-- models should not know about text scanning or sentence-specific heuristics
+- models should not know about text scanning or task-specific rule code
 
 ### 7. Decode primitives
 
@@ -275,7 +275,7 @@ Only after that should we add:
 ### What belongs above the primitive layer
 
 - sentence-boundary default configs
-- corpus-specific heuristics
+- corpus-specific model configurations
 - task presets
 - Python convenience wrappers
 - migration adapters for `charboundary`

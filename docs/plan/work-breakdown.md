@@ -117,10 +117,10 @@ should be updated most frequently during active development.
 - deliverable: whitespace, punctuation, digit, alpha flags
 - dependencies: E3-T1
 
-### E3-T4 Boundary heuristic appender
+### E3-T4 Boundary shape appender
 
 - status: `done`
-- deliverable: quote/list/terminator heuristics comparable to `charboundary`
+- deliverable: reusable boundary shape feature block
 - dependencies: E3-T1
 
 ### E3-T5 Composite kernel

@@ -17,6 +17,8 @@ use std::path::{Path, PathBuf};
 const MODEL_FORMAT: &str = "charstreamer.model-bundle.v1";
 const MODEL_NAME: &str = "charstreamer-default";
 const MODEL_ENGINE: &str = "burn_shallow_mlp_sentence_v1";
+const SENTENCE_TAG: &str = "<|sentence|>";
+const PARAGRAPH_TAG: &str = "<|paragraph|>";
 
 #[derive(Clone, Debug)]
 struct Args {
@@ -33,6 +35,7 @@ struct Args {
     encoded_left: usize,
     encoded_right: usize,
     count_radius: usize,
+    negative_keep_rate: f32,
     version: String,
 }
 
@@ -51,6 +54,7 @@ impl Args {
         let mut encoded_left = 7_usize;
         let mut encoded_right = 7_usize;
         let mut count_radius = 24_usize;
+        let mut negative_keep_rate = 0.02_f32;
         let mut version = env!("CARGO_PKG_VERSION").to_owned();
 
         let mut args = env::args().skip(1);
@@ -71,6 +75,7 @@ impl Args {
                 "--encoded-left" => encoded_left = parse_value(&arg, &mut args)?,
                 "--encoded-right" => encoded_right = parse_value(&arg, &mut args)?,
                 "--count-radius" => count_radius = parse_value(&arg, &mut args)?,
+                "--negative-keep-rate" => negative_keep_rate = parse_value(&arg, &mut args)?,
                 "--version" => version = value_after(&arg, &mut args)?,
                 "--help" | "-h" => {
                     print_help();
@@ -90,6 +95,9 @@ impl Args {
         if learning_rate <= 0.0 {
             return Err("--learning-rate must be positive".to_owned());
         }
+        if !(0.0..=1.0).contains(&negative_keep_rate) {
+            return Err("--negative-keep-rate must be between 0 and 1".to_owned());
+        }
 
         Ok(Self {
             inputs,
@@ -105,6 +113,7 @@ impl Args {
             encoded_left,
             encoded_right,
             count_radius,
+            negative_keep_rate,
             version,
         })
     }
@@ -130,7 +139,7 @@ fn print_help() {
         "train_sentence_burn --input DATA.jsonl --out MODEL_DIR [options]\n\
 \n\
 Options:\n\
-  --input PATH           Synthetic span JSONL input. Can be repeated.\n\
+  --input PATH           JSONL input with spans or inline sentence tags. Can be repeated.\n\
   --out PATH             Output model bundle directory.\n\
   --report PATH          Optional training report JSON path.\n\
   --max-records N        Stop after N records across inputs.\n\
@@ -143,6 +152,7 @@ Options:\n\
   --encoded-left N       Encoded byte window left width. Default: 7.\n\
   --encoded-right N      Encoded byte window right width. Default: 7.\n\
   --count-radius N       Directional count feature radius. Default: 24.\n\
+  --negative-keep-rate R Keep-rate for negative all-position rows. Default: 0.02.\n\
   --version VERSION      Model bundle version. Default: crate version."
     );
 }
@@ -150,14 +160,22 @@ Options:\n\
 #[derive(Debug, Deserialize)]
 struct JsonlRecord {
     text: String,
+    #[serde(default)]
     spans: Vec<JsonlSpan>,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Clone, Debug, Deserialize)]
 struct JsonlSpan {
+    #[serde(default)]
     label: String,
+    #[serde(default)]
     start: usize,
+    #[serde(default)]
     end: usize,
+    #[serde(default)]
+    char_start: Option<usize>,
+    #[serde(default)]
+    char_end: Option<usize>,
     #[serde(default)]
     right_open: bool,
 }
@@ -236,6 +254,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         read_input(
             input,
             args.max_records,
+            args.negative_keep_rate,
             &kernel,
             &mut train,
             &mut valid,
@@ -322,7 +341,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 "train_negative_rows": train.negatives,
                 "validation_rows": valid.labels.len(),
                 "validation_positive_rows": valid.positives,
-                "validation_negative_rows": valid.negatives
+                "validation_negative_rows": valid.negatives,
+                "negative_keep_rate": args.negative_keep_rate
             }
         }
     });
@@ -353,6 +373,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 fn read_input(
     input: &Path,
     max_records: Option<usize>,
+    negative_keep_rate: f32,
     kernel: &impl FeatureKernel<f32>,
     train: &mut RowSet,
     valid: &mut RowSet,
@@ -372,14 +393,142 @@ fn read_input(
             Ok(record) => record,
             Err(_) => continue,
         };
-        extract_record(&record, stats.records_seen, kernel, train, valid, stats)?;
+        let record = normalize_record(record);
+        extract_record(
+            &record,
+            stats.records_seen,
+            negative_keep_rate,
+            kernel,
+            train,
+            valid,
+            stats,
+        )?;
     }
     Ok(())
+}
+
+fn normalize_record(record: JsonlRecord) -> JsonlRecord {
+    if record.spans.is_empty()
+        && (record.text.contains(SENTENCE_TAG) || record.text.contains(PARAGRAPH_TAG))
+    {
+        return parse_inline_boundary_record(&record.text);
+    }
+
+    let spans = record
+        .spans
+        .into_iter()
+        .filter_map(|span| normalize_span(&record.text, span))
+        .collect();
+    JsonlRecord {
+        text: record.text,
+        spans,
+    }
+}
+
+fn parse_inline_boundary_record(annotated: &str) -> JsonlRecord {
+    let mut text = String::with_capacity(annotated.len());
+    let mut spans = Vec::new();
+    let mut sentence_start = 0_usize;
+    let mut offset = 0_usize;
+
+    while offset < annotated.len() {
+        let rest = &annotated[offset..];
+        let marker_len = if rest.starts_with(SENTENCE_TAG) {
+            Some(SENTENCE_TAG.len())
+        } else if rest.starts_with(PARAGRAPH_TAG) {
+            Some(PARAGRAPH_TAG.len())
+        } else {
+            None
+        };
+
+        if let Some(marker_len) = marker_len {
+            let sentence_end = text.len();
+            if sentence_end > sentence_start {
+                spans.push(JsonlSpan {
+                    label: "sentence".to_owned(),
+                    start: sentence_start,
+                    end: sentence_end,
+                    char_start: None,
+                    char_end: None,
+                    right_open: false,
+                });
+                sentence_start = sentence_end;
+            }
+            offset += marker_len;
+            continue;
+        }
+
+        let ch = rest
+            .chars()
+            .next()
+            .expect("remaining annotated text must contain one UTF-8 scalar");
+        text.push(ch);
+        offset += ch.len_utf8();
+    }
+
+    if text.len() > sentence_start {
+        spans.push(JsonlSpan {
+            label: "sentence".to_owned(),
+            start: sentence_start,
+            end: text.len(),
+            char_start: None,
+            char_end: None,
+            right_open: true,
+        });
+    }
+
+    JsonlRecord { text, spans }
+}
+
+fn normalize_span(text: &str, span: JsonlSpan) -> Option<JsonlSpan> {
+    if !span.label.eq_ignore_ascii_case("sentence") {
+        return None;
+    }
+    let (start, end) = if let (Some(char_start), Some(char_end)) = (span.char_start, span.char_end)
+    {
+        char_span_to_byte_span(text, char_start, char_end)?
+    } else if span.end <= text.len()
+        && span.start < span.end
+        && text.is_char_boundary(span.start)
+        && text.is_char_boundary(span.end)
+    {
+        (span.start, span.end)
+    } else {
+        char_span_to_byte_span(text, span.start, span.end)?
+    };
+    Some(JsonlSpan {
+        label: "sentence".to_owned(),
+        start,
+        end,
+        char_start: None,
+        char_end: None,
+        right_open: span.right_open,
+    })
+}
+
+fn char_span_to_byte_span(
+    text: &str,
+    char_start: usize,
+    char_end: usize,
+) -> Option<(usize, usize)> {
+    if char_start >= char_end {
+        return None;
+    }
+    let mut offsets = Vec::with_capacity(text.chars().count() + 1);
+    offsets.push(0);
+    for (byte_offset, _) in text.char_indices().skip(1) {
+        offsets.push(byte_offset);
+    }
+    offsets.push(text.len());
+    let start = *offsets.get(char_start)?;
+    let end = *offsets.get(char_end)?;
+    (start < end).then_some((start, end))
 }
 
 fn extract_record(
     record: &JsonlRecord,
     record_index: usize,
+    negative_keep_rate: f32,
     kernel: &impl FeatureKernel<f32>,
     train: &mut RowSet,
     valid: &mut RowSet,
@@ -424,6 +573,9 @@ fn extract_record(
 
     for (row_index, candidate) in candidates.iter().enumerate() {
         let label = u8::from(positives.contains(&candidate.break_end));
+        if label == 0 && !keep_negative(record_index, *candidate, negative_keep_rate) {
+            continue;
+        }
         target.push(features.as_view().row(row_index), label);
         stats.candidate_count += 1;
         if label == 1 {
@@ -433,6 +585,24 @@ fn extract_record(
 
     stats.records_used += 1;
     Ok(())
+}
+
+fn keep_negative(
+    record_index: usize,
+    candidate: charstreamer_segmentation::SentenceBoundaryCandidate,
+    keep_rate: f32,
+) -> bool {
+    if keep_rate >= 1.0 {
+        return true;
+    }
+    if keep_rate <= 0.0 {
+        return false;
+    }
+    let value = ((record_index as u64).wrapping_mul(1_146_959_810_393_466_583)
+        ^ (candidate.feature_pos as u64).wrapping_mul(1_099_511_628_211)
+        ^ (candidate.break_end as u64))
+        % 10_000;
+    (value as f32 / 10_000.0) < keep_rate
 }
 
 fn sentence_end_boundaries(text: &str, spans: &[JsonlSpan]) -> BTreeSet<usize> {
