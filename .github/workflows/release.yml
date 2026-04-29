@@ -121,12 +121,17 @@ jobs:
         if: runner.os == 'macOS'
         shell: bash
         run: |
-          brew install openblas pkg-config
+          brew install openblas pkg-config gcc
           openblas_prefix="$(brew --prefix openblas)"
+          gcc_prefix="$(brew --prefix gcc)"
+          gcc_lib="$gcc_prefix/lib/gcc/current"
           {
             echo "OPENBLAS_DIR=$openblas_prefix"
             echo "PKG_CONFIG_PATH=$openblas_prefix/lib/pkgconfig:$PKG_CONFIG_PATH"
-            echo "DYLD_FALLBACK_LIBRARY_PATH=$openblas_prefix/lib:$DYLD_FALLBACK_LIBRARY_PATH"
+            echo "DYLD_FALLBACK_LIBRARY_PATH=$openblas_prefix/lib:$gcc_lib:$DYLD_FALLBACK_LIBRARY_PATH"
+            echo "LIBRARY_PATH=$openblas_prefix/lib:$gcc_lib:$LIBRARY_PATH"
+            echo "LD_LIBRARY_PATH=$openblas_prefix/lib:$gcc_lib:$LD_LIBRARY_PATH"
+            echo "RUSTFLAGS=${RUSTFLAGS:-} -C link-arg=-Wl,-rpath,$openblas_prefix/lib -C link-arg=-Wl,-rpath,$gcc_lib"
           } >> "$GITHUB_ENV"
 
       - name: Install Windows dependencies
