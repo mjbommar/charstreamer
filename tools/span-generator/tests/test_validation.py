@@ -4,6 +4,7 @@ from charstreamer_span_generator.cli import (
     is_sentence_eligible_block,
     looks_like_dialogue_line,
     looks_like_list_item,
+    parse_args,
 )
 from charstreamer_span_generator.models import UnitLabelAssignment
 from charstreamer_span_generator.validation import (
@@ -251,3 +252,9 @@ def test_looks_like_dialogue_line_requires_actual_dialogue_shape() -> None:
     assert not looks_like_dialogue_line(
         'EyePoint Pharmaceuticals, Inc. (“EyePoint”) and ImprimisRx, LLC (“Imprimis”) entered into an agreement.'
     )
+
+
+def test_legacy_generator_exposes_max_chunks_per_doc() -> None:
+    args = parse_args(["--output", "/tmp/out.jsonl", "--max-chunks-per-doc", "2"])
+
+    assert args.max_chunks_per_doc == 2

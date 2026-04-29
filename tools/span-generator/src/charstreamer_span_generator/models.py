@@ -8,11 +8,13 @@ from pydantic import BaseModel, Field
 DEFAULT_LABEL_DEFINITIONS: dict[str, str] = {
     "section_heading": (
         "A heading, title, caption, or section label that introduces a following "
-        "block of content."
+        "block of content. Do not use for court captions, party names, docket "
+        "headers, table cells, or ordinary prose."
     ),
     "paragraph": (
         "A contiguous prose block or block-level text region that should be "
-        "treated as one paragraph."
+        "treated as one paragraph. Do not use for headings, metadata furniture, "
+        "tables, or isolated OCR fragments."
     ),
     "sentence": (
         "A sentence-level unit. In streaming windows this can be a complete "
@@ -25,7 +27,8 @@ DEFAULT_LABEL_DEFINITIONS: dict[str, str] = {
     ),
     "list_item": (
         "A bullet, numbered clause, or enumerated list item, including its full "
-        "content."
+        "content. Do not use for table rows, page numbers, line numbers, citation "
+        "numbers, exhibit labels, or isolated numeric cells."
     ),
     "metadata": (
         "Front matter, boilerplate, headers, page furniture, signature blocks, "

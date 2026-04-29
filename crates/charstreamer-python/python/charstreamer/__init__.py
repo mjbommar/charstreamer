@@ -30,6 +30,7 @@ __version__ = _native.__version__
 _MODEL_FORMAT = "charstreamer.model-bundle.v1"
 _MODEL_NAME = "charstreamer-default"
 _SUPPORTED_MODEL_ENGINES = {"burn_shallow_mlp_sentence_v1"}
+_SUPPORTED_STRUCTURE_ENGINES = {"burn_multilabel_mlp_structure_v1"}
 _MODEL_ARCHIVE = f"{_MODEL_NAME}-{__version__}.zip"
 _GITHUB_RELEASE_BASE = "https://github.com/mjbommar/charstreamer/releases/download"
 _DEFAULT_MODEL_URL = f"{_GITHUB_RELEASE_BASE}/v{__version__}/{_MODEL_ARCHIVE}"
@@ -138,11 +139,18 @@ def model_info(
 def _model_runtime_available(resolution: ModelResolution) -> bool:
     if not resolution.resolved or not resolution.manifest:
         return False
-    return resolution.manifest.get("engine") in _SUPPORTED_MODEL_ENGINES
+    if resolution.manifest.get("engine") not in _SUPPORTED_MODEL_ENGINES:
+        return False
+    structure = resolution.manifest.get("structure")
+    if structure is None:
+        return True
+    return structure.get("engine") in _SUPPORTED_STRUCTURE_ENGINES
 
 
 def _runtime_name(resolution: ModelResolution) -> str:
     if _model_runtime_available(resolution):
+        if resolution.manifest and resolution.manifest.get("structure"):
+            return "burn_combined_segmentation"
         return "burn_sentence_boundary"
     return "unavailable"
 

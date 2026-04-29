@@ -10,6 +10,7 @@ from charstreamer_span_generator.simple import (
     choose_sample_focus_label,
     parse_per_label_tagged_texts,
     sample_segment,
+    segment_quality_ok,
     validate_span_quality,
 )
 
@@ -65,6 +66,25 @@ def test_simple_generator_exposes_llm_parameters() -> None:
     assert args.store_response is True
 
 
+def test_simple_generator_exposes_source_quality_filters() -> None:
+    args = parse_args(
+        [
+            "--output",
+            "/tmp/annotations.jsonl",
+            "--min-alpha-ratio",
+            "0.25",
+            "--max-symbol-ratio",
+            "0.3",
+            "--max-control-ratio",
+            "0.01",
+        ]
+    )
+
+    assert args.min_alpha_ratio == 0.25
+    assert args.max_symbol_ratio == 0.3
+    assert args.max_control_ratio == 0.01
+
+
 def test_sample_segment_can_select_natural_targets() -> None:
     text = "Short.\n\nThis is a complete sentence. This is another complete sentence.\n\nTail."
     segment = sample_segment(
@@ -79,6 +99,21 @@ def test_sample_segment_can_select_natural_targets() -> None:
     assert segment is not None
     assert segment["mode"] == "natural"
     assert segment["text"] == "This is a complete sentence. This is another complete sentence."
+
+
+def test_segment_quality_filter_rejects_binary_like_text() -> None:
+    assert segment_quality_ok(
+        "This is readable legal prose with enough letters.",
+        min_alpha_ratio=0.18,
+        max_symbol_ratio=0.4,
+        max_control_ratio=0.02,
+    )
+    assert not segment_quality_ok(
+        "M4S$@-3(@,\"!2(#X^(`T^/B`-96YD;V)J#3D@,\"!O8FH-/#P@+TQE;",
+        min_alpha_ratio=0.18,
+        max_symbol_ratio=0.4,
+        max_control_ratio=0.02,
+    )
 
 
 def test_choose_labels_round_robins_focus_labels() -> None:

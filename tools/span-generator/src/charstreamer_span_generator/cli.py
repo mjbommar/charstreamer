@@ -46,17 +46,25 @@ Hard rules:
 - Allowed labels are the requested labels plus `none`.
 - Use `none` for blank lines, separators, or lines that do not clearly match a
   requested label.
+- Use `none` for table cells/rows, isolated numbers, OCR garbage, navigation
+  fragments, and ambiguous keyword-only matches.
 - Do not emit byte offsets or copy the full document back.
 
 Label guidance:
 - `metadata`: attorney blocks, captions, page furniture, docket headers,
-  signature lines, court names, case numbers, filing dates, or other boilerplate.
+  signature lines, court names, case numbers, filing dates, party/counsel lines,
+  or other document-identifying boilerplate. Do not use for ordinary body prose
+  that merely mentions a court, date, party, statute, or title.
 - `section_heading`: standalone title, heading, caption, subject line, article
-  title, or section label. Use this for lines like `Subject: ...`, `Re: ...`,
-  `Относно: ...`, article titles, and similar short display text.
+  title, or section label that introduces following content. Use this for lines
+  like `Subject: ...`, `Re: ...`, `Относно: ...`, article titles, and similar
+  short display text. Do not use for docket captions, party names, tables, or
+  body-prose sentences.
 - `paragraph`: body prose or other main-content paragraph block.
 - `dialogue`: quoted speech or transcript-style speaker turn.
-- `list_item`: bullet, numbered item, clause, or enumerated list entry.
+- `list_item`: bullet, numbered item, clause, or enumerated list entry with
+  natural-language content. Do not use for table rows/cells, page numbers, line
+  numbers, citation numbers, exhibit numbers, or isolated numeric values.
 - `none`: empty line, separator, or no requested target label.
 
 Example output:
@@ -136,6 +144,11 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--output", required=True)
     parser.add_argument("--limit-docs", type=_positive_int, default=1)
     parser.add_argument("--limit-chunks", type=_positive_int)
+    parser.add_argument(
+        "--max-chunks-per-doc",
+        type=_positive_int,
+        help="Limit emitted chunks per source document to keep generated sets diverse.",
+    )
     parser.add_argument("--max-chars-per-chunk", type=_positive_int, default=4000)
     parser.add_argument("--shuffle-buffer-size", type=_positive_int, default=512)
     parser.add_argument("--seed", type=int, default=7)
@@ -207,6 +220,7 @@ def main() -> None:
 
             source_identifier = str(row.get("identifier", f"row-{doc_index}"))
             mime_type = str(row.get("mime_type", "text/plain"))
+            doc_chunks = 0
             for chunk in iter_text_chunks(
                 source_identifier=source_identifier,
                 mime_type=mime_type,
@@ -214,6 +228,8 @@ def main() -> None:
                 text=text,
                 max_chars=args.max_chars_per_chunk,
             ):
+                if args.max_chunks_per_doc is not None and doc_chunks >= args.max_chunks_per_doc:
+                    break
                 try:
                     result = annotator.annotate(chunk, args.labels)
                 except Exception as exc:
@@ -271,6 +287,7 @@ def main() -> None:
                 handle.write(b"\n")
                 handle.flush()
                 written += 1
+                doc_chunks += 1
                 if written % args.progress_every == 0:
                     print(f"progress: wrote={written} failures={failures}", flush=True)
                 if args.limit_chunks is not None and written >= args.limit_chunks:

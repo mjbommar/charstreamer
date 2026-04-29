@@ -1,4 +1,4 @@
-use charstreamer_backend_burn::{BurnModelIoError, BurnShallowMlpModel};
+use charstreamer_backend_burn::{BurnModelIoError, BurnMultiLabelMlpModel, BurnShallowMlpModel};
 use charstreamer_core::{
     BatchPredictor, BytePos, ByteWindowSpec, CandidateBuffer, FeatureKernel, FeatureMatrix,
     FeatureScratch, TextBytes,
@@ -6,7 +6,8 @@ use charstreamer_core::{
 use charstreamer_kernels::{
     AsciiClassAppender, BoundaryShapeAppender, ByteClass, CompositeFeatureKernel,
     DirectionalByteClassCountAppender, DirectionalUnicodeCategoryGroupCountAppender,
-    EncodedByteWindowAppender, LineByteCountAppender, UnicodeCategoryGroup,
+    EncodedByteWindowAppender, LineByteCountAppender, LineByteNgramHashAppender,
+    LineContextMetricsAppender, LineShapeMetricsAppender, UnicodeCategoryGroup,
 };
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
@@ -87,6 +88,7 @@ impl Default for SegmenterConfig {
 const MODEL_FORMAT: &str = "charstreamer.model-bundle.v1";
 const MODEL_NAME: &str = "charstreamer-default";
 const BURN_SENTENCE_ENGINE: &str = "burn_shallow_mlp_sentence_v1";
+const BURN_STRUCTURE_ENGINE: &str = "burn_multilabel_mlp_structure_v1";
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct BurnSentenceFeatureConfig {
@@ -109,6 +111,61 @@ impl Default for BurnSentenceFeatureConfig {
     }
 }
 
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct BurnStructureFeatureConfig {
+    pub encoded_left: usize,
+    pub encoded_right: usize,
+    pub count_radius: usize,
+    #[serde(default)]
+    pub line_ngram_buckets: usize,
+    #[serde(default = "default_line_ngram_min_n")]
+    pub line_ngram_min_n: usize,
+    #[serde(default = "default_line_ngram_max_n")]
+    pub line_ngram_max_n: usize,
+    #[serde(default)]
+    pub line_context_metrics: bool,
+    pub feature_dim: usize,
+    pub hidden_dim1: usize,
+    pub hidden_dim2: usize,
+    pub output_dim: usize,
+}
+
+const fn default_line_ngram_min_n() -> usize {
+    3
+}
+
+const fn default_line_ngram_max_n() -> usize {
+    5
+}
+
+impl Default for BurnStructureFeatureConfig {
+    fn default() -> Self {
+        Self {
+            encoded_left: 7,
+            encoded_right: 7,
+            count_radius: 32,
+            line_ngram_buckets: 0,
+            line_ngram_min_n: default_line_ngram_min_n(),
+            line_ngram_max_n: default_line_ngram_max_n(),
+            line_context_metrics: false,
+            feature_dim: 0,
+            hidden_dim1: 96,
+            hidden_dim2: 48,
+            output_dim: 0,
+        }
+    }
+}
+
+#[derive(Clone, Debug, Deserialize)]
+struct StructureBundleManifest {
+    engine: String,
+    #[serde(default)]
+    features: BurnStructureFeatureConfig,
+    labels: Vec<Label>,
+    #[serde(default)]
+    thresholds: BTreeMap<String, f32>,
+}
+
 #[derive(Clone, Debug, Deserialize)]
 struct ModelBundleManifest {
     format: String,
@@ -118,6 +175,8 @@ struct ModelBundleManifest {
     features: BurnSentenceFeatureConfig,
     #[serde(default)]
     thresholds: BTreeMap<String, f32>,
+    #[serde(default)]
+    structure: Option<StructureBundleManifest>,
     files: Vec<ModelBundleFile>,
 }
 
@@ -190,6 +249,15 @@ pub struct BurnSentenceSegmenter {
     model: BurnShallowMlpModel,
     feature_config: BurnSentenceFeatureConfig,
     threshold: f32,
+    structure: Option<BurnStructureRuntime>,
+}
+
+#[derive(Debug)]
+struct BurnStructureRuntime {
+    model: BurnMultiLabelMlpModel,
+    feature_config: BurnStructureFeatureConfig,
+    labels: Vec<Label>,
+    thresholds: BTreeMap<String, f32>,
 }
 
 impl BurnSentenceSegmenter {
@@ -224,6 +292,49 @@ impl BurnSentenceSegmenter {
             model_file,
         )?;
         let threshold = *manifest.thresholds.get("sentence.end").unwrap_or(&0.5);
+        let structure = match &manifest.structure {
+            Some(structure_manifest) => {
+                validate_structure_manifest(structure_manifest)?;
+                let kernel = burn_structure_kernel(&structure_manifest.features);
+                let expected_dim = kernel.schema().total_dim();
+                if structure_manifest.features.feature_dim != 0
+                    && structure_manifest.features.feature_dim != expected_dim
+                {
+                    return Err(ModelArtifactError::new(format!(
+                        "structure feature_dim {} does not match runtime feature_dim {}",
+                        structure_manifest.features.feature_dim, expected_dim
+                    )));
+                }
+                let output_dim = structure_manifest.labels.len();
+                if structure_manifest.features.output_dim != 0
+                    && structure_manifest.features.output_dim != output_dim
+                {
+                    return Err(ModelArtifactError::new(format!(
+                        "structure output_dim {} does not match labels length {}",
+                        structure_manifest.features.output_dim, output_dim
+                    )));
+                }
+                let model_file = find_model_file(root, &manifest, "semantic_structure")?;
+                let model = BurnMultiLabelMlpModel::load_named_mpk(
+                    expected_dim,
+                    structure_manifest.features.hidden_dim1,
+                    structure_manifest.features.hidden_dim2,
+                    output_dim,
+                    model_file,
+                )?;
+                Some(BurnStructureRuntime {
+                    model,
+                    feature_config: BurnStructureFeatureConfig {
+                        feature_dim: expected_dim,
+                        output_dim,
+                        ..structure_manifest.features.clone()
+                    },
+                    labels: structure_manifest.labels.clone(),
+                    thresholds: structure_manifest.thresholds.clone(),
+                })
+            }
+            None => None,
+        };
 
         Ok(Self {
             config,
@@ -233,6 +344,7 @@ impl BurnSentenceSegmenter {
                 ..manifest.features
             },
             threshold,
+            structure,
         })
     }
 
@@ -243,11 +355,49 @@ impl BurnSentenceSegmenter {
     }
 
     pub fn spans(&self, text: &str) -> Result<Vec<AnnotationSpan>, ModelArtifactError> {
-        if !self.config.include_sentences {
+        let mut spans = Vec::new();
+        if let Some(structure) = &self.structure {
+            spans.extend(self.structure_spans(text, structure)?);
+        }
+        if self.config.include_sentences {
+            spans.extend(self.sentence_spans(text)?);
+        }
+        Ok(normalize_spans(text, spans, self.config.min_span_bytes))
+    }
+
+    fn structure_spans(
+        &self,
+        text: &str,
+        runtime: &BurnStructureRuntime,
+    ) -> Result<Vec<AnnotationSpan>, ModelArtifactError> {
+        let candidates = line_candidates(text);
+        if candidates.is_empty() || runtime.labels.is_empty() {
             return Ok(Vec::new());
         }
-        let spans = self.sentence_spans(text)?;
-        Ok(normalize_spans(text, spans, self.config.min_span_bytes))
+        let kernel = burn_structure_kernel(&runtime.feature_config);
+        let mut candidate_buffer = CandidateBuffer::new();
+        for candidate in &candidates {
+            candidate_buffer.push(BytePos::from_usize(candidate.feature_pos));
+        }
+        let mut features = FeatureMatrix::<f32>::default();
+        features.resize_zeroed(candidate_buffer.len(), kernel.schema().total_dim());
+        kernel.extract_into(
+            TextBytes::from_utf8(text),
+            candidate_buffer.as_slice(),
+            features.as_view_mut(),
+            &mut FeatureScratch::default(),
+        )?;
+        let output_dim = runtime.labels.len();
+        let mut scores = vec![0.0_f32; candidate_buffer.len() * output_dim];
+        runtime
+            .model
+            .predict_flat_into(features.as_view(), &mut scores)?;
+        Ok(decode_structure_spans(
+            &candidates,
+            &scores,
+            &runtime.labels,
+            &runtime.thresholds,
+        ))
     }
 
     fn sentence_spans(&self, text: &str) -> Result<Vec<AnnotationSpan>, ModelArtifactError> {
@@ -325,24 +475,53 @@ fn validate_sentence_manifest(manifest: &ModelBundleManifest) -> Result<(), Mode
     Ok(())
 }
 
+fn validate_structure_manifest(
+    manifest: &StructureBundleManifest,
+) -> Result<(), ModelArtifactError> {
+    if manifest.engine != BURN_STRUCTURE_ENGINE {
+        return Err(ModelArtifactError::new(format!(
+            "unsupported structure model engine `{}`",
+            manifest.engine
+        )));
+    }
+    if manifest.features.hidden_dim1 == 0 || manifest.features.hidden_dim2 == 0 {
+        return Err(ModelArtifactError::new(
+            "structure manifest requires positive hidden dimensions",
+        ));
+    }
+    if manifest.labels.is_empty() {
+        return Err(ModelArtifactError::new(
+            "structure manifest requires at least one label",
+        ));
+    }
+    if manifest.labels.contains(&Label::Sentence) {
+        return Err(ModelArtifactError::new(
+            "structure manifest must not include the sentence label",
+        ));
+    }
+    Ok(())
+}
+
 fn find_sentence_model_file(
     root: &Path,
     manifest: &ModelBundleManifest,
 ) -> Result<PathBuf, ModelArtifactError> {
+    find_model_file(root, manifest, "sentence_boundary")
+}
+
+fn find_model_file(
+    root: &Path,
+    manifest: &ModelBundleManifest,
+    role: &str,
+) -> Result<PathBuf, ModelArtifactError> {
     let file = manifest
         .files
         .iter()
-        .find(|file| file.role.as_deref() == Some("sentence_boundary"))
-        .or_else(|| {
-            manifest
-                .files
-                .iter()
-                .find(|file| file.path.ends_with(".mpk"))
-        })
+        .find(|file| file.role.as_deref() == Some(role))
         .ok_or_else(|| {
-            ModelArtifactError::new(
-                "model manifest does not include a sentence boundary `.mpk` payload",
-            )
+            ModelArtifactError::new(format!(
+                "model manifest does not include a `{role}` payload"
+            ))
         })?;
     let path = Path::new(&file.path);
     if path.is_absolute()
@@ -406,10 +585,70 @@ pub fn burn_sentence_kernel(config: &BurnSentenceFeatureConfig) -> CompositeFeat
     ])
 }
 
+pub fn burn_structure_kernel(config: &BurnStructureFeatureConfig) -> CompositeFeatureKernel {
+    let mut appenders: Vec<Box<dyn charstreamer_core::FeatureAppender<f32> + Send + Sync>> = vec![
+        Box::new(EncodedByteWindowAppender::new(ByteWindowSpec::new(
+            config.encoded_left,
+            config.encoded_right,
+        ))),
+        Box::new(AsciiClassAppender::new()),
+        Box::new(BoundaryShapeAppender::new()),
+        Box::new(DirectionalByteClassCountAppender::new(
+            "directional_byte_class_counts",
+            ByteWindowSpec::new(config.count_radius, config.count_radius),
+            vec![
+                ByteClass::AsciiUpper,
+                ByteClass::AsciiLower,
+                ByteClass::AsciiDigit,
+                ByteClass::AsciiWhitespace,
+                ByteClass::AsciiPunctuation,
+                ByteClass::LineBreak,
+                ByteClass::OpenBracket,
+                ByteClass::CloseBracket,
+            ],
+        )),
+        Box::new(DirectionalUnicodeCategoryGroupCountAppender::new(
+            "directional_unicode_group_counts",
+            ByteWindowSpec::new(config.count_radius, config.count_radius),
+            vec![
+                UnicodeCategoryGroup::L,
+                UnicodeCategoryGroup::N,
+                UnicodeCategoryGroup::P,
+                UnicodeCategoryGroup::S,
+                UnicodeCategoryGroup::Z,
+                UnicodeCategoryGroup::C,
+            ],
+        )),
+        Box::new(LineByteCountAppender::new(
+            "line_byte_counts",
+            vec![b'\n', b'#', b'-', b'*', b':', b'"', b'\'', b'<', b'>', b','],
+        )),
+        Box::new(LineShapeMetricsAppender::new()),
+    ];
+    if config.line_ngram_buckets > 0 {
+        appenders.push(Box::new(LineByteNgramHashAppender::new(
+            config.line_ngram_buckets,
+            config.line_ngram_min_n,
+            config.line_ngram_max_n,
+        )));
+    }
+    if config.line_context_metrics {
+        appenders.push(Box::new(LineContextMetricsAppender::new()));
+    }
+    CompositeFeatureKernel::new(appenders)
+}
+
 #[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd)]
 pub struct SentenceBoundaryCandidate {
     pub feature_pos: usize,
     pub break_end: usize,
+}
+
+#[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd)]
+pub struct LineCandidate {
+    pub start: usize,
+    pub end: usize,
+    pub feature_pos: usize,
 }
 
 /// Returns every UTF-8 scalar end position as a model scoring candidate.
@@ -424,6 +663,75 @@ pub fn sentence_boundary_candidates(text: &str) -> Vec<SentenceBoundaryCandidate
             break_end: offset + ch.len_utf8(),
         })
         .collect()
+}
+
+#[must_use]
+pub fn line_candidates(text: &str) -> Vec<LineCandidate> {
+    let mut candidates = Vec::new();
+    let mut start = 0_usize;
+    for (offset, ch) in text.char_indices() {
+        if !matches!(ch, '\n' | '\r') {
+            continue;
+        }
+        push_line_candidate(text, start, offset, &mut candidates);
+        start = offset + ch.len_utf8();
+    }
+    push_line_candidate(text, start, text.len(), &mut candidates);
+    candidates
+}
+
+fn push_line_candidate(text: &str, start: usize, end: usize, out: &mut Vec<LineCandidate>) {
+    let trimmed_start = next_nonspace_position(text, start, end).unwrap_or(end);
+    let trimmed_end = previous_nonspace_end(text, start, end).unwrap_or(trimmed_start);
+    if trimmed_end <= trimmed_start {
+        return;
+    }
+    out.push(LineCandidate {
+        start: trimmed_start,
+        end: trimmed_end,
+        feature_pos: trimmed_start,
+    });
+}
+
+fn decode_structure_spans(
+    candidates: &[LineCandidate],
+    scores: &[f32],
+    labels: &[Label],
+    thresholds: &BTreeMap<String, f32>,
+) -> Vec<AnnotationSpan> {
+    let mut spans = Vec::new();
+    for (label_index, label) in labels.iter().copied().enumerate() {
+        let threshold = *thresholds.get(label.as_str()).unwrap_or(&0.5);
+        let mut current: Option<AnnotationSpan> = None;
+        for (candidate_index, candidate) in candidates.iter().copied().enumerate() {
+            let score = scores[candidate_index * labels.len() + label_index];
+            if score < threshold {
+                if let Some(span) = current.take() {
+                    spans.push(span);
+                }
+                continue;
+            }
+            if let Some(span) = &mut current {
+                if candidate.start <= span.end.saturating_add(2) {
+                    span.end = span.end.max(candidate.end);
+                    span.score = span.score.max(score);
+                    continue;
+                }
+                spans.push(span.clone());
+            }
+            current = Some(AnnotationSpan::new(
+                label,
+                candidate.start,
+                candidate.end,
+                score,
+            ));
+        }
+        if let Some(span) = current {
+            spans.push(span);
+        }
+    }
+    spans.sort_by_key(|span| (span.start, span.end, label_priority(span.label)));
+    spans
 }
 
 /// Renders nested inline tags from standoff spans.
@@ -507,12 +815,14 @@ fn render_event_order(left: &RenderEvent, right: &RenderEvent) -> std::cmp::Orde
         .then_with(|| match (left.kind, right.kind) {
             (RenderEventKind::Close, RenderEventKind::Open) => std::cmp::Ordering::Less,
             (RenderEventKind::Open, RenderEventKind::Close) => std::cmp::Ordering::Greater,
-            (RenderEventKind::Open, RenderEventKind::Open) => label_priority(left.label)
-                .cmp(&label_priority(right.label))
-                .then_with(|| right.end.cmp(&left.end)),
-            (RenderEventKind::Close, RenderEventKind::Close) => label_priority(right.label)
-                .cmp(&label_priority(left.label))
-                .then_with(|| right.start.cmp(&left.start)),
+            (RenderEventKind::Open, RenderEventKind::Open) => right
+                .end
+                .cmp(&left.end)
+                .then_with(|| label_priority(left.label).cmp(&label_priority(right.label))),
+            (RenderEventKind::Close, RenderEventKind::Close) => right
+                .start
+                .cmp(&left.start)
+                .then_with(|| label_priority(right.label).cmp(&label_priority(left.label))),
         })
 }
 
@@ -531,24 +841,44 @@ fn normalize_spans(
                 && span.end.saturating_sub(span.start) >= min_span_bytes
         })
         .collect::<Vec<_>>();
+    spans = remove_crossing_spans(spans);
     spans.sort_by_key(|span| (span.start, span.end, label_priority(span.label)));
-    remove_crossing_spans(spans)
+    spans
 }
 
 fn remove_crossing_spans(spans: Vec<AnnotationSpan>) -> Vec<AnnotationSpan> {
-    let mut accepted = Vec::with_capacity(spans.len());
-    let mut active: Vec<AnnotationSpan> = Vec::new();
-    for span in spans {
-        active.retain(|prior| prior.end > span.start);
-        let crosses = active.iter().any(|prior| {
-            prior.start < span.start && span.start < prior.end && prior.end < span.end
-        });
-        if !crosses {
-            active.push(span.clone());
+    let mut ordered = spans;
+    ordered.sort_by_key(|span| {
+        (
+            label_priority(span.label),
+            span.start,
+            std::cmp::Reverse(span.end),
+        )
+    });
+    let mut accepted: Vec<AnnotationSpan> = Vec::with_capacity(ordered.len());
+    for span in ordered {
+        if !accepted
+            .iter()
+            .any(|prior| ranges_cross(span.start, span.end, prior.start, prior.end))
+        {
             accepted.push(span);
         }
     }
     accepted
+}
+
+fn ranges_cross(a_start: usize, a_end: usize, b_start: usize, b_end: usize) -> bool {
+    ranges_overlap(a_start, a_end, b_start, b_end)
+        && !range_contains(a_start, a_end, b_start, b_end)
+        && !range_contains(b_start, b_end, a_start, a_end)
+}
+
+fn ranges_overlap(a_start: usize, a_end: usize, b_start: usize, b_end: usize) -> bool {
+    a_start < b_end && b_start < a_end
+}
+
+fn range_contains(a_start: usize, a_end: usize, b_start: usize, b_end: usize) -> bool {
+    a_start <= b_start && b_end <= a_end
 }
 
 fn label_priority(label: Label) -> usize {
@@ -596,6 +926,38 @@ mod tests {
         assert_eq!(
             rendered,
             "<|sentence|>A.</|sentence|> <|sentence|>B.</|sentence|>"
+        );
+    }
+
+    #[test]
+    fn render_same_start_spans_as_valid_nested_tags() {
+        let text = "# Background";
+        let spans = vec![
+            AnnotationSpan::new(Label::Sentence, 0, text.len(), 0.9),
+            AnnotationSpan::new(Label::Section, 0, text.len(), 0.8),
+            AnnotationSpan::new(Label::Metadata, 0, text.len(), 0.7),
+        ];
+        let rendered = render_spans(text, &spans);
+        assert_eq!(
+            rendered,
+            "<|metadata|><|section|><|sentence|># Background</|sentence|></|section|></|metadata|>"
+        );
+    }
+
+    #[test]
+    fn normalize_keeps_structure_when_sentence_crosses_it() {
+        let text = "# Background\nThe court reviewed the invoice. The shipment was late.\n\n- Notice was timely.";
+        let spans = vec![
+            AnnotationSpan::new(Label::Sentence, 0, 44, 0.99),
+            AnnotationSpan::new(Label::Section, 0, 12, 0.57),
+            AnnotationSpan::new(Label::Paragraph, 13, text.len(), 0.88),
+            AnnotationSpan::new(Label::ListItem, 69, text.len(), 0.39),
+        ];
+        let normalized = normalize_spans(text, spans, 1);
+        let labels = normalized.iter().map(|span| span.label).collect::<Vec<_>>();
+        assert_eq!(
+            labels,
+            vec![Label::Section, Label::Paragraph, Label::ListItem]
         );
     }
 

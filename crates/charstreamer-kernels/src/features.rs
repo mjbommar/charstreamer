@@ -983,6 +983,362 @@ impl FeatureAppender<f32> for LineByteCountAppender {
     }
 }
 
+/// Continuous shape metrics for the current line around each candidate.
+#[derive(Clone, Copy, Debug, Default)]
+pub struct LineShapeMetricsAppender;
+
+impl LineShapeMetricsAppender {
+    #[must_use]
+    pub fn new() -> Self {
+        Self
+    }
+}
+
+impl FeatureAppender<f32> for LineShapeMetricsAppender {
+    fn block(&self) -> FeatureBlock {
+        FeatureBlock::new("line_shape_metrics", 14)
+    }
+
+    fn append_into(
+        &self,
+        text: TextBytes<'_>,
+        positions: CandidateSlice<'_>,
+        mut out: FeatureMatrixViewMut<'_, f32>,
+        _scratch: &mut FeatureScratch,
+    ) -> Result<(), FeatureError> {
+        if out.rows != positions.len() || out.cols != 14 {
+            return Err(FeatureError::new(
+                "line-shape-metrics appender got a mismatched destination view",
+            ));
+        }
+        let Some(text) = text.as_utf8_str() else {
+            return Err(FeatureError::new(
+                "line-shape metrics require valid UTF-8 text",
+            ));
+        };
+
+        for (row_index, position) in positions.data.iter().enumerate() {
+            let line = current_line(text, position.as_usize());
+            let trimmed = line.trim();
+            let leading_ws_bytes = line.len().saturating_sub(line.trim_start().len());
+            let mut chars = 0_usize;
+            let mut alphabetic = 0_usize;
+            let mut uppercase = 0_usize;
+            let mut lowercase = 0_usize;
+            let mut digits = 0_usize;
+            let mut whitespace = 0_usize;
+            let mut punctuation = 0_usize;
+            let mut symbols = 0_usize;
+            let mut quote_chars = 0_usize;
+            for ch in line.chars() {
+                chars += 1;
+                alphabetic += usize::from(ch.is_alphabetic());
+                uppercase += usize::from(ch.is_uppercase());
+                lowercase += usize::from(ch.is_lowercase());
+                digits += usize::from(ch.is_ascii_digit());
+                whitespace += usize::from(ch.is_whitespace());
+                punctuation += usize::from(ch.is_ascii_punctuation());
+                symbols += usize::from(ch.is_ascii_graphic() && !ch.is_ascii_alphanumeric());
+                quote_chars += usize::from(matches!(ch, '"' | '\'' | '“' | '”' | '‘' | '’'));
+            }
+            let denom = chars.max(1) as f32;
+            let alpha_denom = alphabetic.max(1) as f32;
+            let row = out.row_mut(row_index);
+            row[0] = capped_len_feature(line.len(), 1024.0);
+            row[1] = capped_len_feature(trimmed.len(), 1024.0);
+            row[2] = (leading_ws_bytes as f32 / 64.0).min(1.0);
+            row[3] = alphabetic as f32 / denom;
+            row[4] = digits as f32 / denom;
+            row[5] = whitespace as f32 / denom;
+            row[6] = punctuation as f32 / denom;
+            row[7] = symbols as f32 / denom;
+            row[8] = uppercase as f32 / alpha_denom;
+            row[9] = lowercase as f32 / alpha_denom;
+            row[10] = quote_chars as f32 / denom;
+            row[11] = bool_to_f32(trimmed.ends_with(':'));
+            row[12] = bool_to_f32(
+                trimmed
+                    .chars()
+                    .next_back()
+                    .is_some_and(|ch| matches!(ch, '.' | ';' | ',')),
+            );
+            row[13] = bool_to_f32(
+                trimmed
+                    .chars()
+                    .all(|ch| !ch.is_alphabetic() || ch.is_uppercase() || !ch.is_lowercase()),
+            );
+        }
+        Ok(())
+    }
+}
+
+/// Neighbor-line and coarse document-position metrics for line-level candidates.
+#[derive(Clone, Copy, Debug, Default)]
+pub struct LineContextMetricsAppender;
+
+impl LineContextMetricsAppender {
+    #[must_use]
+    pub fn new() -> Self {
+        Self
+    }
+}
+
+impl FeatureAppender<f32> for LineContextMetricsAppender {
+    fn block(&self) -> FeatureBlock {
+        FeatureBlock::new("line_context_metrics", 22)
+    }
+
+    fn append_into(
+        &self,
+        text: TextBytes<'_>,
+        positions: CandidateSlice<'_>,
+        mut out: FeatureMatrixViewMut<'_, f32>,
+        _scratch: &mut FeatureScratch,
+    ) -> Result<(), FeatureError> {
+        if out.rows != positions.len() || out.cols != 22 {
+            return Err(FeatureError::new(
+                "line-context-metrics appender got a mismatched destination view",
+            ));
+        }
+        let Some(text) = text.as_utf8_str() else {
+            return Err(FeatureError::new(
+                "line-context metrics require valid UTF-8 text",
+            ));
+        };
+
+        for (row_index, position) in positions.data.iter().enumerate() {
+            let offset = position.as_usize().min(text.len());
+            let line_start = line_start_before_or_at(text, offset);
+            let line_end = line_end_after_or_at(text, offset);
+            let previous = previous_line_before(text, line_start).unwrap_or_default();
+            let next = next_line_after(text, line_end).unwrap_or_default();
+            let previous_shape = compact_line_shape(previous);
+            let next_shape = compact_line_shape(next);
+            let row = out.row_mut(row_index);
+            row[0] = bool_to_f32(line_start == 0);
+            row[1] = bool_to_f32(line_end >= text.len());
+            row[2] = offset as f32 / text.len().max(1) as f32;
+            row[3] = bool_to_f32(preceding_whitespace_run_newline_count(text, line_start) >= 2);
+            row[4] = bool_to_f32(whitespace_run_newline_count(text, line_end) >= 2);
+            row[5] = previous_shape.len;
+            row[6] = next_shape.len;
+            row[7] = previous_shape.alpha_ratio;
+            row[8] = next_shape.alpha_ratio;
+            row[9] = previous_shape.digit_ratio;
+            row[10] = next_shape.digit_ratio;
+            row[11] = previous_shape.upper_ratio;
+            row[12] = next_shape.upper_ratio;
+            row[13] = previous_shape.punct_ratio;
+            row[14] = next_shape.punct_ratio;
+            row[15] = bool_to_f32(starts_heading_like(previous));
+            row[16] = bool_to_f32(starts_heading_like(next));
+            row[17] = bool_to_f32(starts_list_like(previous));
+            row[18] = bool_to_f32(starts_list_like(next));
+            row[19] = bool_to_f32(has_metadata_colon(previous));
+            row[20] = bool_to_f32(has_metadata_colon(next));
+            row[21] = bool_to_f32(previous.trim().is_empty() || next.trim().is_empty());
+        }
+        Ok(())
+    }
+}
+
+#[derive(Clone, Copy, Debug, Default)]
+struct CompactLineShape {
+    len: f32,
+    alpha_ratio: f32,
+    digit_ratio: f32,
+    upper_ratio: f32,
+    punct_ratio: f32,
+}
+
+fn previous_line_before(text: &str, line_start: usize) -> Option<&str> {
+    if line_start == 0 {
+        return None;
+    }
+    let mut previous_end = line_start;
+    while previous_end > 0 && matches!(text.as_bytes()[previous_end - 1], b'\n' | b'\r') {
+        previous_end -= 1;
+    }
+    let previous_start = line_start_before_or_at(text, previous_end);
+    text.get(previous_start..previous_end)
+}
+
+fn compact_line_shape(line: &str) -> CompactLineShape {
+    let trimmed = line.trim();
+    let mut chars = 0_usize;
+    let mut alphabetic = 0_usize;
+    let mut uppercase = 0_usize;
+    let mut digits = 0_usize;
+    let mut punctuation = 0_usize;
+    for ch in trimmed.chars() {
+        chars += 1;
+        alphabetic += usize::from(ch.is_alphabetic());
+        uppercase += usize::from(ch.is_uppercase());
+        digits += usize::from(ch.is_ascii_digit());
+        punctuation += usize::from(ch.is_ascii_punctuation());
+    }
+    let denom = chars.max(1) as f32;
+    let alpha_denom = alphabetic.max(1) as f32;
+    CompactLineShape {
+        len: capped_len_feature(trimmed.len(), 1024.0),
+        alpha_ratio: alphabetic as f32 / denom,
+        digit_ratio: digits as f32 / denom,
+        upper_ratio: uppercase as f32 / alpha_denom,
+        punct_ratio: punctuation as f32 / denom,
+    }
+}
+
+fn capped_len_feature(len: usize, cap: f32) -> f32 {
+    ((len as f32 + 1.0).ln() / cap.ln()).min(1.0)
+}
+
+/// Encoded byte prefix and suffix of the current trimmed line.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct LineEdgeByteWindowAppender {
+    prefix: usize,
+    suffix: usize,
+}
+
+impl LineEdgeByteWindowAppender {
+    #[must_use]
+    pub fn new(prefix: usize, suffix: usize) -> Self {
+        Self { prefix, suffix }
+    }
+}
+
+impl FeatureAppender<f32> for LineEdgeByteWindowAppender {
+    fn block(&self) -> FeatureBlock {
+        FeatureBlock::new("line_edge_byte_window", self.prefix + self.suffix)
+    }
+
+    fn append_into(
+        &self,
+        text: TextBytes<'_>,
+        positions: CandidateSlice<'_>,
+        mut out: FeatureMatrixViewMut<'_, f32>,
+        _scratch: &mut FeatureScratch,
+    ) -> Result<(), FeatureError> {
+        let width = self.prefix + self.suffix;
+        if out.rows != positions.len() || out.cols != width {
+            return Err(FeatureError::new(
+                "line-edge-byte-window appender got a mismatched destination view",
+            ));
+        }
+        let Some(text) = text.as_utf8_str() else {
+            return Err(FeatureError::new(
+                "line-edge byte window requires valid UTF-8 text",
+            ));
+        };
+
+        for (row_index, position) in positions.data.iter().enumerate() {
+            let line = current_line(text, position.as_usize()).trim();
+            let bytes = line.as_bytes();
+            let row = out.row_mut(row_index);
+            row.fill(0.0);
+            for index in 0..self.prefix.min(bytes.len()) {
+                row[index] = normalized_byte_value(bytes[index]);
+            }
+            for index in 0..self.suffix.min(bytes.len()) {
+                row[self.prefix + index] = normalized_byte_value(bytes[bytes.len() - 1 - index]);
+            }
+        }
+        Ok(())
+    }
+}
+
+fn normalized_byte_value(byte: u8) -> f32 {
+    (byte as f32 + 1.0) / 256.0
+}
+
+/// Signed feature-hashed byte n-grams from the current trimmed line.
+///
+/// This block is task-agnostic lexical signal: it does not know any label
+/// vocabulary, and it keeps feature width fixed regardless of corpus size.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct LineByteNgramHashAppender {
+    buckets: usize,
+    min_n: usize,
+    max_n: usize,
+}
+
+impl LineByteNgramHashAppender {
+    #[must_use]
+    pub fn new(buckets: usize, min_n: usize, max_n: usize) -> Self {
+        Self {
+            buckets,
+            min_n,
+            max_n,
+        }
+    }
+}
+
+impl FeatureAppender<f32> for LineByteNgramHashAppender {
+    fn block(&self) -> FeatureBlock {
+        FeatureBlock::new("line_byte_ngram_hash", self.buckets)
+    }
+
+    fn append_into(
+        &self,
+        text: TextBytes<'_>,
+        positions: CandidateSlice<'_>,
+        mut out: FeatureMatrixViewMut<'_, f32>,
+        _scratch: &mut FeatureScratch,
+    ) -> Result<(), FeatureError> {
+        if self.buckets == 0 || self.min_n == 0 || self.min_n > self.max_n {
+            return Err(FeatureError::new(
+                "line-byte-ngram-hash appender got an invalid configuration",
+            ));
+        }
+        if out.rows != positions.len() || out.cols != self.buckets {
+            return Err(FeatureError::new(
+                "line-byte-ngram-hash appender got a mismatched destination view",
+            ));
+        }
+        let Some(text) = text.as_utf8_str() else {
+            return Err(FeatureError::new(
+                "line-byte-ngram-hash features require valid UTF-8 text",
+            ));
+        };
+
+        for (row_index, position) in positions.data.iter().enumerate() {
+            let bytes = current_line(text, position.as_usize()).trim().as_bytes();
+            let row = out.row_mut(row_index);
+            row.fill(0.0);
+            let mut ngrams = 0_usize;
+            for n in self.min_n..=self.max_n.min(bytes.len()) {
+                for start in 0..=bytes.len() - n {
+                    let hash = hash_lower_ascii_ngram(&bytes[start..start + n], n as u8);
+                    let bucket = (hash as usize) % self.buckets;
+                    let sign = if hash & (1 << 63) == 0 { 1.0 } else { -1.0 };
+                    row[bucket] += sign;
+                    ngrams += 1;
+                }
+            }
+            if ngrams > 0 {
+                let scale = (ngrams as f32).sqrt().recip();
+                for value in row.iter_mut() {
+                    *value *= scale;
+                }
+            }
+        }
+        Ok(())
+    }
+}
+
+fn hash_lower_ascii_ngram(bytes: &[u8], n: u8) -> u64 {
+    let mut hash = 0xcbf2_9ce4_8422_2325_u64 ^ u64::from(n);
+    for &byte in bytes {
+        let normalized = if byte.is_ascii_uppercase() {
+            byte.to_ascii_lowercase()
+        } else {
+            byte
+        };
+        hash ^= u64::from(normalized);
+        hash = hash.wrapping_mul(0x0000_0100_0000_01B3);
+    }
+    hash
+}
+
 /// Zero-extra-allocation composite kernel over stable column blocks.
 pub struct CompositeFeatureKernel {
     appenders: Vec<Box<dyn FeatureAppender<f32> + Send + Sync>>,
@@ -1066,8 +1422,8 @@ mod tests {
         BoundaryShapeAppender, ByteClass, ByteClassCountAppender, ByteSet256, ByteSetScanner,
         CompositeFeatureKernel, DirectionalByteClassCountAppender,
         DirectionalUnicodeCategoryCountAppender, DirectionalUnicodeCategoryGroupCountAppender,
-        EncodedByteWindowAppender, SelectedByteCountAppender, UnicodeCategory,
-        UnicodeCategoryGroup,
+        EncodedByteWindowAppender, LineByteNgramHashAppender, LineContextMetricsAppender,
+        SelectedByteCountAppender, UnicodeCategory, UnicodeCategoryGroup,
     };
 
     #[test]
@@ -1166,6 +1522,61 @@ mod tests {
     fn encoded_window_appender_uses_expected_width() {
         let appender = EncodedByteWindowAppender::new(ByteWindowSpec::new(5, 3));
         assert_eq!(appender.block().width, 9);
+    }
+
+    #[test]
+    fn line_byte_ngram_hash_appender_is_case_stable_and_normalized() {
+        let appender = LineByteNgramHashAppender::new(64, 3, 4);
+        let positions = charstreamer_core::CandidateSlice {
+            data: &[charstreamer_core::BytePos::from_usize(0)],
+        };
+        let mut upper = charstreamer_core::FeatureMatrix::<f32>::default();
+        let mut lower = charstreamer_core::FeatureMatrix::<f32>::default();
+        upper.resize_zeroed(1, appender.block().width);
+        lower.resize_zeroed(1, appender.block().width);
+        let mut scratch = charstreamer_core::FeatureScratch::default();
+
+        appender
+            .append_into(
+                TextBytes::from_utf8("Case Number\nBody"),
+                positions,
+                upper.as_view_mut(),
+                &mut scratch,
+            )
+            .expect("line n-gram feature extraction should succeed");
+        appender
+            .append_into(
+                TextBytes::from_utf8("case number\nBody"),
+                positions,
+                lower.as_view_mut(),
+                &mut scratch,
+            )
+            .expect("line n-gram feature extraction should succeed");
+
+        assert_eq!(upper.data, lower.data);
+        assert!(upper.data.iter().any(|value| *value != 0.0));
+        assert!(upper.data.iter().all(|value| value.is_finite()));
+    }
+
+    #[test]
+    fn line_context_metrics_appender_uses_neighbor_lines_and_position() {
+        let appender = LineContextMetricsAppender::new();
+        let text = TextBytes::from_utf8("TITLE\n\n1. Item\nBody line.\n");
+        let positions = charstreamer_core::CandidateSlice {
+            data: &[charstreamer_core::BytePos::from_usize("TITLE\n\n".len())],
+        };
+        let mut matrix = charstreamer_core::FeatureMatrix::<f32>::default();
+        matrix.resize_zeroed(1, appender.block().width);
+        let mut scratch = charstreamer_core::FeatureScratch::default();
+
+        appender
+            .append_into(text, positions, matrix.as_view_mut(), &mut scratch)
+            .expect("line-context feature extraction should succeed");
+
+        assert_eq!(matrix.data[3], 1.0);
+        assert_eq!(matrix.data[18], 0.0);
+        assert!(matrix.data[2] > 0.0);
+        assert!(matrix.data[6] > 0.0);
     }
 
     #[test]

@@ -77,7 +77,14 @@ Rules:
   Never include context text in any output value.
 - If the target begins or ends in the middle of a structure, tag the visible portion that is
   inside TARGET_SEGMENT. The validator will mark the span edge as open.
-- Prefer high precision over broad coverage, but do not omit obvious sentence/paragraph spans.
+- Prefer high precision over broad coverage. It is better to leave a field unchanged than to
+  tag an ambiguous or merely keyword-matching span.
+- Do not create a tag just because the field exists. Fields with no clear visible span must
+  be exact untagged copies of TARGET_SEGMENT.
+- Labels are semantic structural roles, not keyword searches: a line mentioning a court, date,
+  patent office, quotation mark, number, or document title is not automatically metadata,
+  dialogue, list_item, or section.
+- Do not omit obvious sentence/paragraph spans when those labels are requested.
 - Return only the structured JSON object matching the schema.
 """
 
@@ -93,24 +100,34 @@ LABEL_GUIDANCE: dict[str, str] = {
         "unless they function as sentence text."
     ),
     "paragraph": (
-        "Visible paragraph material. A paragraph can start before the target or "
-        "continue after it; wrap the visible prose portion inside the target."
+        "Visible body-prose paragraph material. A paragraph can start before the "
+        "target or continue after it; wrap the visible prose portion inside the "
+        "target. Do not tag standalone headings, docket/case furniture, signature "
+        "lines, tables, or list markers as paragraph unless they are clearly part "
+        "of a main-content prose block."
     ),
     "section": (
-        "Visible section heading/title/caption/article-label text. If a heading is "
-        "cut by the target edge, tag the visible heading portion."
+        "Visible standalone section heading/title/caption/article-label text. Tag "
+        "only the heading line or visible heading fragment. Do not tag ordinary "
+        "sentences, clauses, patent prose, citations, or body paragraphs merely "
+        "because they mention a topic."
     ),
     "dialogue": (
-        "Visible dialogue material, including quoted speech, Q/A text, and "
-        "speaker turns. Tag target-edge dialogue continuations when visible."
+        "Visible dialogue material: direct speech, Q/A transcript turns, or "
+        "speaker-labeled utterances. Do not tag quoted legal terms, quoted titles, "
+        "tables, citations, or ordinary prose containing quotation marks."
     ),
     "list_item": (
-        "Visible bullet, numbered, lettered, or enumerated list item material. "
-        "A list item can start before or continue after the target."
+        "Visible bullet, numbered, lettered, or enumerated list entry material. "
+        "A list item can start before or continue after the target. Do not tag "
+        "page numbers, numbered citations, table rows, or section numbers unless "
+        "the text is clearly an item in a list."
     ),
     "metadata": (
-        "Visible document furniture such as captions, case metadata, filing dates, "
-        "parties, signature blocks, page headers/footers, addresses, or boilerplate identifiers."
+        "Visible document furniture such as captions, docket/case metadata, filing "
+        "dates, parties, signature blocks, page headers/footers, addresses, or "
+        "boilerplate identifiers. Do not tag ordinary body prose merely because it "
+        "mentions a court, date, patent office, statute, or document title."
     ),
 }
 
@@ -146,6 +163,24 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--min-chars", type=positive_int, default=50)
     parser.add_argument("--max-chars", type=positive_int, default=1000)
     parser.add_argument("--context-chars", type=non_negative_int, default=120)
+    parser.add_argument(
+        "--min-alpha-ratio",
+        type=probability,
+        default=0.18,
+        help="Skip sampled segments with too little alphabetic text before annotation.",
+    )
+    parser.add_argument(
+        "--max-symbol-ratio",
+        type=probability,
+        default=0.40,
+        help="Skip sampled segments dominated by non-space symbols before annotation.",
+    )
+    parser.add_argument(
+        "--max-control-ratio",
+        type=probability,
+        default=0.02,
+        help="Skip sampled segments with too many control characters before annotation.",
+    )
     parser.add_argument(
         "--segment-mode",
         choices=["mixed", "natural", "random"],
@@ -321,6 +356,13 @@ def main() -> None:
                     args.edge_jitter_probability,
                 )
                 if segment is None:
+                    continue
+                if not segment_quality_ok(
+                    segment["text"],
+                    min_alpha_ratio=args.min_alpha_ratio,
+                    max_symbol_ratio=args.max_symbol_ratio,
+                    max_control_ratio=args.max_control_ratio,
+                ):
                     continue
                 try:
                     annotation = annotate_segment(
@@ -908,6 +950,50 @@ def snap_to_whitespace(
     if end - start < min_chars:
         end = min(len(text), start + min_chars)
     return start, end
+
+
+def segment_quality_ok(
+    text: str,
+    *,
+    min_alpha_ratio: float,
+    max_symbol_ratio: float,
+    max_control_ratio: float,
+) -> bool:
+    stripped = text.strip()
+    if not stripped:
+        return False
+    chars = list(stripped)
+    total = len(chars)
+    alpha = sum(char.isalpha() for char in chars)
+    whitespace = sum(char.isspace() for char in chars)
+    controls = sum((ord(char) < 32 and char not in "\n\r\t") for char in chars)
+    symbols = sum(
+        (not char.isalnum() and not char.isspace() and char not in ".:,;!?()[]{}'\"-/")
+        for char in chars
+    )
+    if alpha / total < min_alpha_ratio:
+        return False
+    if controls / total > max_control_ratio:
+        return False
+    if symbols / total > max_symbol_ratio:
+        return False
+    if total >= 40 and whitespace / total < 0.02:
+        return False
+    if longest_nonspace_run(stripped) > 160:
+        return False
+    return True
+
+
+def longest_nonspace_run(text: str) -> int:
+    longest = 0
+    current = 0
+    for char in text:
+        if char.isspace():
+            longest = max(longest, current)
+            current = 0
+        else:
+            current += 1
+    return max(longest, current)
 
 
 def char_to_byte_offsets(text: str) -> list[int]:

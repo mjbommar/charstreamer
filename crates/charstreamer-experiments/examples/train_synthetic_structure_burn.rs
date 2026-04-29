@@ -7,14 +7,7 @@ use std::io::{BufRead, BufReader};
 use std::path::PathBuf;
 use std::time::Instant;
 
-use burn::backend::{Autodiff, NdArray};
-use burn::module::{AutodiffModule, Module};
-use burn::nn::loss::BinaryCrossEntropyLossConfig;
-use burn::nn::{Linear, LinearConfig, Relu};
-use burn::optim::{AdamConfig, GradientsParams, Optimizer};
-use burn::prelude::*;
-use burn::tensor::activation::sigmoid;
-use burn::tensor::{TensorData, backend::Backend};
+use charstreamer_backend_burn::{BurnMultiLabelMlpFitOptions, BurnMultiLabelMlpModel};
 use charstreamer_core::{
     BytePos, ByteWindowSpec, CandidateBuffer, FeatureKernel, FeatureMatrix, FeatureScratch,
     TextBytes,
@@ -22,17 +15,15 @@ use charstreamer_core::{
 use charstreamer_kernels::{
     AsciiClassAppender, BoundaryShapeAppender, ByteClass, CompositeFeatureKernel,
     DirectionalByteClassCountAppender, DirectionalUnicodeCategoryGroupCountAppender,
-    EncodedByteWindowAppender, LineByteCountAppender, UnicodeCategoryGroup,
+    EncodedByteWindowAppender, LineByteCountAppender, LineByteNgramHashAppender,
+    LineContextMetricsAppender, LineShapeMetricsAppender, UnicodeCategoryGroup,
 };
 use rand::rngs::SmallRng;
 use rand::seq::SliceRandom;
 use rand::{Rng, SeedableRng};
 use serde::{Deserialize, Serialize};
 
-type InferBackend = NdArray<f32>;
-type TrainBackend = Autodiff<InferBackend>;
-
-const DEFAULT_LABELS: &[&str] = &["metadata", "section", "list_item", "dialogue"];
+const DEFAULT_LABELS: &[&str] = &["paragraph", "metadata", "section", "list_item", "dialogue"];
 
 #[derive(Debug)]
 enum TrainError {
@@ -87,9 +78,15 @@ impl From<charstreamer_core::FeatureError> for TrainError {
 #[derive(Clone, Debug)]
 struct Config {
     inputs: Vec<PathBuf>,
+    validation_inputs: Vec<PathBuf>,
+    out_dir: Option<PathBuf>,
     report_path: PathBuf,
     inspect_texts: Vec<String>,
     labels: Vec<String>,
+    label_aliases: BTreeMap<String, String>,
+    label_positive_repeats: BTreeMap<String, usize>,
+    label_loss_weights: BTreeMap<String, f32>,
+    label_positive_loss_weights: BTreeMap<String, f32>,
     epochs: usize,
     batch_size: usize,
     hidden_dim: usize,
@@ -103,6 +100,10 @@ struct Config {
     encoded_left: usize,
     encoded_right: usize,
     count_radius: usize,
+    line_ngram_buckets: usize,
+    line_ngram_min_n: usize,
+    line_ngram_max_n: usize,
+    line_context_metrics: bool,
     validation_predict_batch_size: usize,
     min_span_bytes: usize,
     merge_gap_bytes: usize,
@@ -112,12 +113,18 @@ impl Default for Config {
     fn default() -> Self {
         Self {
             inputs: Vec::new(),
+            validation_inputs: Vec::new(),
+            out_dir: None,
             report_path: PathBuf::from("/tmp/charstreamer-structure-burn-report.json"),
             inspect_texts: Vec::new(),
             labels: DEFAULT_LABELS
                 .iter()
                 .map(|label| (*label).to_string())
                 .collect(),
+            label_aliases: BTreeMap::new(),
+            label_positive_repeats: BTreeMap::new(),
+            label_loss_weights: BTreeMap::new(),
+            label_positive_loss_weights: BTreeMap::new(),
             epochs: 20,
             batch_size: 512,
             hidden_dim: 96,
@@ -131,6 +138,10 @@ impl Default for Config {
             encoded_left: 7,
             encoded_right: 7,
             count_radius: 32,
+            line_ngram_buckets: 0,
+            line_ngram_min_n: 3,
+            line_ngram_max_n: 5,
+            line_context_metrics: false,
             validation_predict_batch_size: 16_384,
             min_span_bytes: 4,
             merge_gap_bytes: 2,
@@ -150,10 +161,6 @@ struct SyntheticSpan {
     label: String,
     start: usize,
     end: usize,
-    #[serde(default)]
-    left_open: bool,
-    #[serde(default)]
-    right_open: bool,
 }
 
 #[derive(Clone, Debug)]
@@ -178,39 +185,6 @@ struct StructureDataset {
     documents: usize,
     chars: usize,
     positives: Vec<usize>,
-}
-
-#[derive(Module, Debug)]
-struct StructureMlp<B: Backend> {
-    input: Linear<B>,
-    activation1: Relu,
-    hidden2: Linear<B>,
-    activation2: Relu,
-    output: Linear<B>,
-}
-
-impl<B: Backend> StructureMlp<B> {
-    fn new(
-        input_dim: usize,
-        hidden_dim: usize,
-        hidden_dim2: usize,
-        output_dim: usize,
-        device: &B::Device,
-    ) -> Self {
-        Self {
-            input: LinearConfig::new(input_dim, hidden_dim).init(device),
-            activation1: Relu::new(),
-            hidden2: LinearConfig::new(hidden_dim, hidden_dim2).init(device),
-            activation2: Relu::new(),
-            output: LinearConfig::new(hidden_dim2, output_dim).init(device),
-        }
-    }
-
-    fn forward_logits(&self, input: Tensor<B, 2>) -> Tensor<B, 2> {
-        let hidden1 = self.activation1.forward(self.input.forward(input));
-        let hidden2 = self.activation2.forward(self.hidden2.forward(hidden1));
-        self.output.forward(hidden2)
-    }
 }
 
 #[derive(Clone, Copy, Debug, Default, Serialize)]
@@ -244,8 +218,17 @@ struct DatasetReport {
 #[derive(Clone, Debug, Serialize)]
 struct TrainingReport {
     inputs: Vec<PathBuf>,
+    validation_inputs: Vec<PathBuf>,
     labels: Vec<String>,
+    label_aliases: BTreeMap<String, String>,
+    label_positive_repeats: BTreeMap<String, usize>,
+    label_loss_weights: BTreeMap<String, f32>,
+    label_positive_loss_weights: BTreeMap<String, f32>,
     feature_dim: usize,
+    line_ngram_buckets: usize,
+    line_ngram_min_n: usize,
+    line_ngram_max_n: usize,
+    line_context_metrics: bool,
     hidden_dim: usize,
     hidden_dim2: usize,
     epochs: usize,
@@ -278,25 +261,48 @@ struct DecodedSpan {
 fn main() -> Result<(), Box<dyn Error>> {
     let config = parse_args(env::args().skip(1))?;
     let started = Instant::now();
-    let (mut records, invalid_documents) = load_records(&config)?;
-    let loaded_documents = records.len();
-    if loaded_documents < 2 {
+    let (mut records, invalid_train_documents) = load_records(&config, &config.inputs)?;
+    if records.is_empty() {
         return Err(Box::new(TrainError::InvalidArgument(
-            "need at least two valid records".to_string(),
+            "need at least one valid training record".to_string(),
         )));
     }
 
     let mut rng = SmallRng::seed_from_u64(config.seed);
     records.shuffle(&mut rng);
-    let split_at =
-        loaded_documents.saturating_mul(config.split_numerator) / config.split_denominator;
-    if split_at == 0 || split_at >= loaded_documents {
-        return Err(Box::new(TrainError::InvalidArgument(
-            "invalid train/validation split".to_string(),
-        )));
-    }
-    let validation_records = records.split_off(split_at);
-    let train_records = records;
+    let (train_records, validation_records, invalid_documents) =
+        if config.validation_inputs.is_empty() {
+            let loaded_documents = records.len();
+            if loaded_documents < 2 {
+                return Err(Box::new(TrainError::InvalidArgument(
+                    "need at least two valid records for split validation".to_string(),
+                )));
+            }
+            let split_at =
+                loaded_documents.saturating_mul(config.split_numerator) / config.split_denominator;
+            if split_at == 0 || split_at >= loaded_documents {
+                return Err(Box::new(TrainError::InvalidArgument(
+                    "invalid train/validation split".to_string(),
+                )));
+            }
+            let validation_records = records.split_off(split_at);
+            (records, validation_records, invalid_train_documents)
+        } else {
+            let (mut validation_records, invalid_validation_documents) =
+                load_records(&config, &config.validation_inputs)?;
+            if validation_records.is_empty() {
+                return Err(Box::new(TrainError::InvalidArgument(
+                    "need at least one valid validation record".to_string(),
+                )));
+            }
+            validation_records.shuffle(&mut SmallRng::seed_from_u64(config.seed ^ 0x5EED));
+            (
+                records,
+                validation_records,
+                invalid_train_documents + invalid_validation_documents,
+            )
+        };
+    let loaded_documents = train_records.len() + validation_records.len();
     let kernel = build_kernel(&config);
 
     let feature_started = Instant::now();
@@ -324,8 +330,17 @@ fn main() -> Result<(), Box<dyn Error>> {
     let validation_end_to_end_seconds = feature_seconds_validation + validation_predict_seconds;
     let report = TrainingReport {
         inputs: config.inputs.clone(),
+        validation_inputs: config.validation_inputs.clone(),
         labels: config.labels.clone(),
+        label_aliases: config.label_aliases.clone(),
+        label_positive_repeats: config.label_positive_repeats.clone(),
+        label_loss_weights: config.label_loss_weights.clone(),
+        label_positive_loss_weights: config.label_positive_loss_weights.clone(),
         feature_dim: train_dataset.features.cols,
+        line_ngram_buckets: config.line_ngram_buckets,
+        line_ngram_min_n: config.line_ngram_min_n,
+        line_ngram_max_n: config.line_ngram_max_n,
+        line_context_metrics: config.line_context_metrics,
         hidden_dim: config.hidden_dim,
         hidden_dim2: config.hidden_dim2,
         epochs: config.epochs,
@@ -349,6 +364,9 @@ fn main() -> Result<(), Box<dyn Error>> {
         output_metrics,
     };
     fs::write(&config.report_path, serde_json::to_vec_pretty(&report)?)?;
+    if let Some(out_dir) = &config.out_dir {
+        write_structure_bundle(out_dir, &model, &report, &config)?;
+    }
 
     println!(
         "loaded_docs={} invalid_docs={} train_docs={} valid_docs={} train_rows={} valid_rows={} feature_dim={} elapsed_s={:.3}",
@@ -396,11 +414,43 @@ fn parse_args(args: impl Iterator<Item = String>) -> Result<Config, TrainError> 
     while let Some(arg) = args.next() {
         match arg.as_str() {
             "--input" => config.inputs.push(next_path(&mut args, "--input")?),
+            "--validation-input" => config
+                .validation_inputs
+                .push(next_path(&mut args, "--validation-input")?),
+            "--out" => config.out_dir = Some(next_path(&mut args, "--out")?),
             "--report" => config.report_path = next_path(&mut args, "--report")?,
             "--inspect-text" => config
                 .inspect_texts
                 .push(next_value(&mut args, "--inspect-text")?),
             "--labels" => config.labels = split_csv(&next_value(&mut args, "--labels")?),
+            "--label-alias" => {
+                parse_string_map_into(
+                    &next_value(&mut args, "--label-alias")?,
+                    &mut config.label_aliases,
+                    "--label-alias",
+                )?;
+            }
+            "--label-positive-repeat" => {
+                parse_usize_map_into(
+                    &next_value(&mut args, "--label-positive-repeat")?,
+                    &mut config.label_positive_repeats,
+                    "--label-positive-repeat",
+                )?;
+            }
+            "--label-loss-weight" => {
+                parse_f32_map_into(
+                    &next_value(&mut args, "--label-loss-weight")?,
+                    &mut config.label_loss_weights,
+                    "--label-loss-weight",
+                )?;
+            }
+            "--label-positive-loss-weight" => {
+                parse_f32_map_into(
+                    &next_value(&mut args, "--label-positive-loss-weight")?,
+                    &mut config.label_positive_loss_weights,
+                    "--label-positive-loss-weight",
+                )?;
+            }
             "--epochs" => config.epochs = parse_next(&mut args, "--epochs")?,
             "--batch-size" => config.batch_size = parse_next(&mut args, "--batch-size")?,
             "--hidden-dim" => config.hidden_dim = parse_next(&mut args, "--hidden-dim")?,
@@ -422,6 +472,18 @@ fn parse_args(args: impl Iterator<Item = String>) -> Result<Config, TrainError> 
             "--encoded-left" => config.encoded_left = parse_next(&mut args, "--encoded-left")?,
             "--encoded-right" => config.encoded_right = parse_next(&mut args, "--encoded-right")?,
             "--count-radius" => config.count_radius = parse_next(&mut args, "--count-radius")?,
+            "--line-ngram-buckets" => {
+                config.line_ngram_buckets = parse_next(&mut args, "--line-ngram-buckets")?;
+            }
+            "--line-ngram-min-n" => {
+                config.line_ngram_min_n = parse_next(&mut args, "--line-ngram-min-n")?;
+            }
+            "--line-ngram-max-n" => {
+                config.line_ngram_max_n = parse_next(&mut args, "--line-ngram-max-n")?;
+            }
+            "--line-context-metrics" => {
+                config.line_context_metrics = true;
+            }
             "--validation-predict-batch-size" => {
                 config.validation_predict_batch_size =
                     parse_next(&mut args, "--validation-predict-batch-size")?;
@@ -463,13 +525,20 @@ fn parse_args(args: impl Iterator<Item = String>) -> Result<Config, TrainError> 
             "negative keep rate must be between 0 and 1".to_string(),
         ));
     }
+    if config.line_ngram_buckets > 0
+        && (config.line_ngram_min_n == 0 || config.line_ngram_min_n > config.line_ngram_max_n)
+    {
+        return Err(TrainError::InvalidArgument(
+            "line n-gram configuration must satisfy 0 < min_n <= max_n".to_string(),
+        ));
+    }
     Ok(config)
 }
 
 fn print_usage() {
     eprintln!(
         "usage: cargo run -p charstreamer-experiments --example train_synthetic_structure_burn -- \\
-  --input <jsonl> [--report <report.json>] [--inspect-text <text>]"
+  --input <jsonl> [--out <model-dir>] [--report <report.json>] [--inspect-text <text>]"
     );
 }
 
@@ -515,7 +584,93 @@ fn split_csv(value: &str) -> Vec<String> {
         .collect()
 }
 
-fn load_records(config: &Config) -> Result<(Vec<CleanRecord>, usize), TrainError> {
+fn parse_string_map_into(
+    value: &str,
+    out: &mut BTreeMap<String, String>,
+    flag: &str,
+) -> Result<(), TrainError> {
+    for part in value
+        .split(',')
+        .map(str::trim)
+        .filter(|part| !part.is_empty())
+    {
+        let (key, value) = part.split_once(':').ok_or_else(|| {
+            TrainError::InvalidArgument(format!("{flag} entries must be from:to"))
+        })?;
+        let key = key.trim();
+        let value = value.trim();
+        if key.is_empty() || value.is_empty() {
+            return Err(TrainError::InvalidArgument(format!(
+                "{flag} entries must be non-empty from:to pairs"
+            )));
+        }
+        out.insert(key.to_string(), value.to_string());
+    }
+    Ok(())
+}
+
+fn parse_usize_map_into(
+    value: &str,
+    out: &mut BTreeMap<String, usize>,
+    flag: &str,
+) -> Result<(), TrainError> {
+    for part in value
+        .split(',')
+        .map(str::trim)
+        .filter(|part| !part.is_empty())
+    {
+        let (key, value) = part.split_once(':').ok_or_else(|| {
+            TrainError::InvalidArgument(format!("{flag} entries must be label:n"))
+        })?;
+        let key = key.trim();
+        let repeat = value.trim().parse::<usize>().map_err(|error| {
+            TrainError::InvalidArgument(format!(
+                "invalid repeat value `{value}` for {flag}: {error}"
+            ))
+        })?;
+        if key.is_empty() || repeat == 0 {
+            return Err(TrainError::InvalidArgument(format!(
+                "{flag} entries must use non-empty labels and positive repeats"
+            )));
+        }
+        out.insert(key.to_string(), repeat);
+    }
+    Ok(())
+}
+
+fn parse_f32_map_into(
+    value: &str,
+    out: &mut BTreeMap<String, f32>,
+    flag: &str,
+) -> Result<(), TrainError> {
+    for part in value
+        .split(',')
+        .map(str::trim)
+        .filter(|part| !part.is_empty())
+    {
+        let (key, value) = part.split_once(':').ok_or_else(|| {
+            TrainError::InvalidArgument(format!("{flag} entries must be label:x"))
+        })?;
+        let key = key.trim();
+        let weight = value.trim().parse::<f32>().map_err(|error| {
+            TrainError::InvalidArgument(format!(
+                "invalid weight value `{value}` for {flag}: {error}"
+            ))
+        })?;
+        if key.is_empty() || !weight.is_finite() || weight <= 0.0 {
+            return Err(TrainError::InvalidArgument(format!(
+                "{flag} entries must use non-empty labels and positive finite weights"
+            )));
+        }
+        out.insert(key.to_string(), weight);
+    }
+    Ok(())
+}
+
+fn load_records(
+    config: &Config,
+    paths: &[PathBuf],
+) -> Result<(Vec<CleanRecord>, usize), TrainError> {
     let allowed_labels = config
         .labels
         .iter()
@@ -523,7 +678,7 @@ fn load_records(config: &Config) -> Result<(Vec<CleanRecord>, usize), TrainError
         .collect::<BTreeSet<_>>();
     let mut records = Vec::new();
     let mut invalid = 0_usize;
-    for path in &config.inputs {
+    for path in paths {
         let file = File::open(path)?;
         let reader = BufReader::new(file);
         for line in reader.lines() {
@@ -541,7 +696,7 @@ fn load_records(config: &Config) -> Result<(Vec<CleanRecord>, usize), TrainError
                     continue;
                 }
             };
-            match clean_record(parsed, &allowed_labels) {
+            match clean_record(parsed, &allowed_labels, &config.label_aliases) {
                 Some(record) => records.push(record),
                 None => invalid += 1,
             }
@@ -550,12 +705,19 @@ fn load_records(config: &Config) -> Result<(Vec<CleanRecord>, usize), TrainError
     Ok((records, invalid))
 }
 
-fn clean_record(record: SyntheticRecord, allowed_labels: &BTreeSet<&str>) -> Option<CleanRecord> {
+fn clean_record(
+    record: SyntheticRecord,
+    allowed_labels: &BTreeSet<&str>,
+    label_aliases: &BTreeMap<String, String>,
+) -> Option<CleanRecord> {
     if record.text.is_empty() {
         return None;
     }
     let mut spans = Vec::new();
-    for span in record.spans {
+    for mut span in record.spans {
+        if let Some(alias) = label_aliases.get(span.label.as_str()) {
+            span.label.clone_from(alias);
+        }
         if !allowed_labels.contains(span.label.as_str()) {
             continue;
         }
@@ -577,7 +739,7 @@ fn clean_record(record: SyntheticRecord, allowed_labels: &BTreeSet<&str>) -> Opt
 }
 
 fn build_kernel(config: &Config) -> CompositeFeatureKernel {
-    CompositeFeatureKernel::new(vec![
+    let mut appenders: Vec<Box<dyn charstreamer_core::FeatureAppender<f32> + Send + Sync>> = vec![
         Box::new(EncodedByteWindowAppender::new(ByteWindowSpec::new(
             config.encoded_left,
             config.encoded_right,
@@ -614,7 +776,19 @@ fn build_kernel(config: &Config) -> CompositeFeatureKernel {
             "line_structure_counts",
             vec![b'\n', b'#', b'-', b'*', b':', b'"', b'\'', b'<', b'>', b','],
         )),
-    ])
+        Box::new(LineShapeMetricsAppender::new()),
+    ];
+    if config.line_ngram_buckets > 0 {
+        appenders.push(Box::new(LineByteNgramHashAppender::new(
+            config.line_ngram_buckets,
+            config.line_ngram_min_n,
+            config.line_ngram_max_n,
+        )));
+    }
+    if config.line_context_metrics {
+        appenders.push(Box::new(LineContextMetricsAppender::new()));
+    }
+    CompositeFeatureKernel::new(appenders)
 }
 
 fn build_dataset(
@@ -653,11 +827,18 @@ fn build_dataset(
             {
                 continue;
             }
-            candidate_buffer.push(BytePos::from_usize(candidate.feature_pos));
-            for (index, value) in row_targets.iter().copied().enumerate() {
-                dataset.positives[index] += usize::from(value != 0);
+            let repeats = if sample_negatives {
+                positive_repeat(&row_targets, &config.labels, &config.label_positive_repeats)
+            } else {
+                1
+            };
+            for _ in 0..repeats {
+                candidate_buffer.push(BytePos::from_usize(candidate.feature_pos));
+                for (index, value) in row_targets.iter().copied().enumerate() {
+                    dataset.positives[index] += usize::from(value != 0);
+                }
+                selected_targets.extend_from_slice(&row_targets);
             }
-            selected_targets.extend_from_slice(&row_targets);
         }
         if candidate_buffer.is_empty() {
             continue;
@@ -716,12 +897,29 @@ fn targets_for_candidate(
         .map(|label| {
             record.spans.iter().any(|span| {
                 span.label == *label
-                    && !span.left_open
-                    && !span.right_open
                     && overlap_ratio(candidate.start, candidate.end, span.start, span.end) >= 0.35
             }) as u8
         })
         .collect()
+}
+
+fn positive_repeat(
+    row_targets: &[u8],
+    labels: &[String],
+    label_positive_repeats: &BTreeMap<String, usize>,
+) -> usize {
+    row_targets
+        .iter()
+        .zip(labels)
+        .filter_map(|(&target, label)| {
+            if target == 0 {
+                None
+            } else {
+                label_positive_repeats.get(label).copied()
+            }
+        })
+        .max()
+        .unwrap_or(1)
 }
 
 fn overlap_ratio(a_start: usize, a_end: usize, b_start: usize, b_end: usize) -> f32 {
@@ -736,113 +934,48 @@ fn overlap_ratio(a_start: usize, a_end: usize, b_start: usize, b_end: usize) -> 
 fn train_model(
     dataset: &StructureDataset,
     config: &Config,
-) -> Result<StructureMlp<InferBackend>, TrainError> {
-    let device = Default::default();
-    TrainBackend::seed(&device, config.seed);
-    let mut model = StructureMlp::<TrainBackend>::new(
-        dataset.features.cols,
-        config.hidden_dim,
-        config.hidden_dim2,
-        dataset.output_dim,
-        &device,
-    );
-    let mut optimizer = AdamConfig::new().init();
-    let loss_fn = BinaryCrossEntropyLossConfig::new()
-        .with_logits(true)
-        .init(&device);
-    let mut indices = (0..dataset.rows).collect::<Vec<_>>();
-    let mut rng = SmallRng::seed_from_u64(config.seed);
-    let mut batch_features = Vec::new();
-    let mut batch_targets = Vec::new();
-    for epoch in 0..config.epochs {
-        indices.shuffle(&mut rng);
-        for batch_rows in indices.chunks(config.batch_size) {
-            gather_features(
-                &dataset.features.data,
-                dataset.features.cols,
-                batch_rows,
-                &mut batch_features,
-            );
-            gather_targets(
-                &dataset.targets,
-                dataset.output_dim,
-                batch_rows,
-                &mut batch_targets,
-            );
-            let features = Tensor::<TrainBackend, 2>::from_data(
-                TensorData::new(
-                    batch_features.clone(),
-                    [batch_rows.len(), dataset.features.cols],
-                ),
-                &device,
-            );
-            let targets = Tensor::<TrainBackend, 2, Int>::from_data(
-                TensorData::new(
-                    batch_targets.clone(),
-                    [batch_rows.len(), dataset.output_dim],
-                ),
-                &device,
-            );
-            let logits = model.forward_logits(features);
-            let loss = loss_fn.forward(logits, targets);
-            let grads = loss.backward();
-            let grads = GradientsParams::from_grads(grads, &model);
-            model = optimizer.step(config.learning_rate, model, grads);
-        }
-        println!("epoch {}/{} complete", epoch + 1, config.epochs);
+) -> Result<BurnMultiLabelMlpModel, TrainError> {
+    let (model, _) = BurnMultiLabelMlpModel::fit_multilabel(
+        dataset.features.as_view(),
+        &dataset.targets,
+        &BurnMultiLabelMlpFitOptions {
+            hidden_dim1: config.hidden_dim,
+            hidden_dim2: config.hidden_dim2,
+            output_dim: dataset.output_dim,
+            class_weights: class_weights(&config.labels, &config.label_loss_weights),
+            positive_weights: class_weights(&config.labels, &config.label_positive_loss_weights),
+            epochs: config.epochs,
+            batch_size: config.batch_size,
+            learning_rate: config.learning_rate,
+            seed: config.seed,
+        },
+        &mut charstreamer_core::FitScratch::default(),
+    )
+    .map_err(|error| TrainError::Burn(format!("burn multi-label training failed: {error}")))?;
+    Ok(model)
+}
+
+fn class_weights(labels: &[String], label_loss_weights: &BTreeMap<String, f32>) -> Vec<f32> {
+    if label_loss_weights.is_empty() {
+        return Vec::new();
     }
-    Ok(model.valid())
+    labels
+        .iter()
+        .map(|label| label_loss_weights.get(label).copied().unwrap_or(1.0))
+        .collect()
 }
 
 fn predict_probabilities(
-    model: &StructureMlp<InferBackend>,
+    model: &BurnMultiLabelMlpModel,
     dataset: &StructureDataset,
     config: &Config,
 ) -> Result<Vec<f32>, TrainError> {
-    let device = Default::default();
-    let mut scores = Vec::with_capacity(dataset.rows * dataset.output_dim);
-    let batch_size = config.validation_predict_batch_size.max(1);
-    for row_start in (0..dataset.rows).step_by(batch_size) {
-        let row_end = row_start.saturating_add(batch_size).min(dataset.rows);
-        let data_start = row_start * dataset.features.cols;
-        let data_end = row_end * dataset.features.cols;
-        let features = Tensor::<InferBackend, 2>::from_data(
-            TensorData::new(
-                dataset.features.data[data_start..data_end].to_vec(),
-                [row_end - row_start, dataset.features.cols],
-            ),
-            &device,
-        );
-        let batch_scores = sigmoid(model.forward_logits(features))
-            .into_data()
-            .to_vec::<f32>()
-            .map_err(|error| TrainError::Burn(format!("burn tensor readback failed: {error}")))?;
-        scores.extend(batch_scores);
-    }
+    let mut scores = vec![0.0_f32; dataset.rows * dataset.output_dim];
+    let _ = config;
+    model
+        .predict_flat_into(dataset.features.as_view(), &mut scores)
+        .map_err(|error| TrainError::Burn(format!("burn prediction failed: {error}")))?;
     Ok(scores)
-}
-
-fn gather_features(data: &[f32], cols: usize, rows: &[usize], out: &mut Vec<f32>) {
-    out.clear();
-    out.reserve(rows.len() * cols);
-    for &row in rows {
-        let start = row * cols;
-        out.extend_from_slice(&data[start..start + cols]);
-    }
-}
-
-fn gather_targets(data: &[u8], output_dim: usize, rows: &[usize], out: &mut Vec<i64>) {
-    out.clear();
-    out.reserve(rows.len() * output_dim);
-    for &row in rows {
-        let start = row * output_dim;
-        out.extend(
-            data[start..start + output_dim]
-                .iter()
-                .copied()
-                .map(i64::from),
-        );
-    }
 }
 
 fn tune_and_score_outputs(
@@ -968,10 +1101,79 @@ fn dataset_report(dataset: &StructureDataset, labels: &[String]) -> DatasetRepor
     }
 }
 
+fn write_structure_bundle(
+    out_dir: &PathBuf,
+    model: &BurnMultiLabelMlpModel,
+    report: &TrainingReport,
+    config: &Config,
+) -> Result<(), TrainError> {
+    fs::create_dir_all(out_dir)?;
+    model
+        .save_named_mpk(out_dir.join("semantic_structure"))
+        .map_err(|error| TrainError::Burn(format!("structure model save failed: {error}")))?;
+    let payload_path = out_dir.join("semantic_structure.mpk");
+    let payload_bytes = fs::metadata(&payload_path)?.len();
+    let thresholds = report
+        .output_metrics
+        .iter()
+        .map(|metric| (metric.label.clone(), metric.threshold))
+        .collect::<BTreeMap<_, _>>();
+    let structure_value = serde_json::json!({
+        "engine": "burn_multilabel_mlp_structure_v1",
+        "labels": config.labels.clone(),
+        "features": {
+            "encoded_left": config.encoded_left,
+            "encoded_right": config.encoded_right,
+            "count_radius": config.count_radius,
+            "line_ngram_buckets": config.line_ngram_buckets,
+            "line_ngram_min_n": config.line_ngram_min_n,
+            "line_ngram_max_n": config.line_ngram_max_n,
+            "line_context_metrics": config.line_context_metrics,
+            "feature_dim": report.feature_dim,
+            "hidden_dim1": config.hidden_dim,
+            "hidden_dim2": config.hidden_dim2,
+            "output_dim": config.labels.len()
+        },
+        "thresholds": thresholds
+    });
+    let manifest_path = out_dir.join("manifest.json");
+    let mut manifest = if manifest_path.is_file() {
+        serde_json::from_slice::<serde_json::Value>(&fs::read(&manifest_path)?)?
+    } else {
+        serde_json::json!({
+            "format": "charstreamer.model-bundle.v1",
+            "name": "charstreamer-default",
+            "version": env!("CARGO_PKG_VERSION"),
+            "engine": "burn_shallow_mlp_sentence_v1",
+            "task": "combined_segmentation",
+            "files": []
+        })
+    };
+    manifest["task"] = serde_json::json!("combined_segmentation");
+    manifest["structure"] = structure_value;
+    let files = manifest["files"].as_array_mut().ok_or_else(|| {
+        TrainError::InvalidArgument("manifest files must be an array".to_string())
+    })?;
+    files.retain(|file| {
+        file.get("role").and_then(|role| role.as_str()) != Some("semantic_structure")
+    });
+    files.push(serde_json::json!({
+        "path": "semantic_structure.mpk",
+        "role": "semantic_structure",
+        "bytes": payload_bytes
+    }));
+    fs::write(&manifest_path, serde_json::to_vec_pretty(&manifest)?)?;
+    fs::write(
+        out_dir.join("structure-training-report.json"),
+        serde_json::to_vec_pretty(report)?,
+    )?;
+    Ok(())
+}
+
 fn inspect_texts(
     config: &Config,
     kernel: &CompositeFeatureKernel,
-    model: &StructureMlp<InferBackend>,
+    model: &BurnMultiLabelMlpModel,
     metrics: &[OutputMetricReport],
 ) -> Result<(), TrainError> {
     if config.inspect_texts.is_empty() {
@@ -994,7 +1196,7 @@ fn inspect_texts(
             config.min_span_bytes,
             config.merge_gap_bytes,
         );
-        let merged = render_merged_annotation(text, &semantic_spans);
+        let merged = render_spans(text, &semantic_spans);
         println!(
             "\ninspect_text_{index} bytes={} chars={} line_candidates={} semantic_spans={}",
             text.len(),
@@ -1013,7 +1215,7 @@ fn inspect_texts(
             );
             for (label_index, label) in config.labels.iter().enumerate() {
                 let raw_score = scores[candidate_index * config.labels.len() + label_index];
-                let score = adjusted_label_score(text, candidate, label, raw_score);
+                let score = raw_score;
                 let threshold = thresholds.get(label).copied().unwrap_or(0.5);
                 if score >= threshold {
                     print!(" {label}={score:.3}");
@@ -1085,7 +1287,7 @@ fn decode_semantic_spans(
         let mut current: Option<DecodedSpan> = None;
         for (candidate_index, candidate) in candidates.iter().copied().enumerate() {
             let raw_score = scores[candidate_index * labels.len() + label_index];
-            let score = adjusted_label_score(text, candidate, label, raw_score);
+            let score = raw_score;
             if score < threshold {
                 continue;
             }
@@ -1119,7 +1321,7 @@ fn decode_semantic_spans(
         }
     }
     spans.sort_by_key(|span| (span.start, span.end, label_priority(&span.label)));
-    resolve_overlapping_semantic_spans(spans)
+    remove_crossing_spans(spans)
 }
 
 fn label_merge_gap(label: &str, default_gap: usize) -> usize {
@@ -1127,252 +1329,6 @@ fn label_merge_gap(label: &str, default_gap: usize) -> usize {
         "list_item" | "dialogue" => 0,
         _ => default_gap,
     }
-}
-
-fn structural_prior_score(text: &str, candidate: LineCandidate, label: &str) -> f32 {
-    let line = &text[candidate.start..candidate.end];
-    match label {
-        "metadata" => metadata_prior_score(text, candidate, line),
-        "section" => section_prior_score(line),
-        "list_item" => list_item_prior_score(line),
-        "dialogue" => dialogue_prior_score(line),
-        _ => 0.0,
-    }
-}
-
-fn adjusted_label_score(text: &str, candidate: LineCandidate, label: &str, raw_score: f32) -> f32 {
-    let prior = structural_prior_score(text, candidate, label);
-    if label == "metadata"
-        && prior == 0.0
-        && !is_before_first_blank_line(text, candidate.start)
-        && raw_score < 0.50
-    {
-        return 0.0;
-    }
-    raw_score.max(prior)
-}
-
-fn metadata_prior_score(text: &str, candidate: LineCandidate, line: &str) -> f32 {
-    if !is_before_first_blank_line(text, candidate.start) {
-        return 0.0;
-    }
-    if has_metadata_colon(line) {
-        return 0.96;
-    }
-    let lowered = line.trim_start().to_ascii_lowercase();
-    if lowered.starts_with("case ")
-        || lowered.starts_with("case:")
-        || lowered.starts_with("docket")
-        || lowered.starts_with("date:")
-        || lowered.starts_with("no.")
-    {
-        return 0.92;
-    }
-    0.0
-}
-
-fn section_prior_score(line: &str) -> f32 {
-    let trimmed = line.trim_start();
-    if trimmed.starts_with('#') {
-        return 0.98;
-    }
-    if trimmed.len() <= 80
-        && !trimmed.ends_with('.')
-        && trimmed.chars().any(|ch| ch.is_ascii_alphabetic())
-        && trimmed
-            .chars()
-            .filter(|ch| ch.is_ascii_alphabetic())
-            .all(|ch| ch.is_ascii_uppercase())
-    {
-        return 0.86;
-    }
-    0.0
-}
-
-fn list_item_prior_score(line: &str) -> f32 {
-    let trimmed = line.trim_start();
-    if trimmed.starts_with(['-', '*', '•']) {
-        return 0.98;
-    }
-    let mut chars = trimmed.chars().peekable();
-    let mut digits = 0_usize;
-    while chars.peek().is_some_and(|ch| ch.is_ascii_digit()) {
-        digits += 1;
-        chars.next();
-    }
-    if digits > 0 && matches!(chars.next(), Some('.' | ')')) {
-        return 0.94;
-    }
-    0.0
-}
-
-fn dialogue_prior_score(line: &str) -> f32 {
-    let trimmed = line.trim_start();
-    if trimmed.starts_with(['"', '\'', '“', '‘']) {
-        return 0.91;
-    }
-    let quote_count = trimmed
-        .chars()
-        .filter(|&ch| matches!(ch, '"' | '“' | '”'))
-        .count();
-    if quote_count >= 2 {
-        return 0.82;
-    }
-    0.0
-}
-
-fn is_before_first_blank_line(text: &str, position: usize) -> bool {
-    let prefix = &text[..position.min(text.len())];
-    !prefix.contains("\n\n") && !prefix.contains("\r\n\r\n")
-}
-
-fn has_metadata_colon(line: &str) -> bool {
-    let trimmed = line.trim_start();
-    let Some(colon) = trimmed.find(':') else {
-        return false;
-    };
-    colon <= 40
-        && trimmed[..colon].chars().any(|ch| ch.is_ascii_alphabetic())
-        && !trimmed[..colon].contains('.')
-}
-
-fn resolve_overlapping_semantic_spans(mut spans: Vec<DecodedSpan>) -> Vec<DecodedSpan> {
-    spans.sort_by_key(|span| (span.start, label_priority(&span.label), span.end));
-    let mut resolved: Vec<DecodedSpan> = Vec::new();
-    for span in spans {
-        if let Some(existing) = resolved
-            .iter()
-            .position(|prior| ranges_overlap(span.start, span.end, prior.start, prior.end))
-        {
-            let prior = &resolved[existing];
-            if span.score > prior.score + 0.05
-                || ((span.score - prior.score).abs() <= 0.05
-                    && label_priority(&span.label) < label_priority(&prior.label))
-            {
-                resolved[existing] = span;
-            }
-            continue;
-        }
-        resolved.push(span);
-    }
-    resolved.sort_by_key(|span| (span.start, span.end));
-    resolved
-}
-
-fn render_merged_annotation(text: &str, semantic_spans: &[DecodedSpan]) -> String {
-    let mut spans = paragraph_spans(text)
-        .into_iter()
-        .map(|(start, end)| DecodedSpan {
-            label: "paragraph".to_string(),
-            start,
-            end,
-            score: 1.0,
-        })
-        .collect::<Vec<_>>();
-    spans.extend_from_slice(semantic_spans);
-    let suppress_sentence_spans = semantic_spans
-        .iter()
-        .filter(|span| matches!(span.label.as_str(), "metadata" | "section" | "list_item"))
-        .cloned()
-        .collect::<Vec<_>>();
-    for (start, end) in sentence_spans(text, &suppress_sentence_spans) {
-        spans.push(DecodedSpan {
-            label: "sentence".to_string(),
-            start,
-            end,
-            score: 1.0,
-        });
-    }
-    render_spans(text, &spans)
-}
-
-fn paragraph_spans(text: &str) -> Vec<(usize, usize)> {
-    let mut spans = Vec::new();
-    let mut start = next_nonspace_position(text, 0, text.len()).unwrap_or(text.len());
-    let bytes = text.as_bytes();
-    let mut index = 0_usize;
-    while index < bytes.len() {
-        if !bytes[index].is_ascii_whitespace() {
-            index += 1;
-            continue;
-        }
-        let run_start = index;
-        let mut newlines = 0_usize;
-        while index < bytes.len() && bytes[index].is_ascii_whitespace() {
-            if matches!(bytes[index], b'\n' | b'\r') {
-                newlines += 1;
-            }
-            index += 1;
-        }
-        if newlines >= 2 {
-            let end = previous_nonspace_end(text, start, run_start).unwrap_or(start);
-            if end > start {
-                spans.push((start, end));
-            }
-            start = next_nonspace_position(text, index, text.len()).unwrap_or(text.len());
-        }
-    }
-    if start < text.len() {
-        let end = previous_nonspace_end(text, start, text.len()).unwrap_or(text.len());
-        if end > start {
-            spans.push((start, end));
-        }
-    }
-    spans
-}
-
-fn sentence_spans(text: &str, suppress: &[DecodedSpan]) -> Vec<(usize, usize)> {
-    let mut spans = Vec::new();
-    let mut cursor = next_allowed_nonspace(text, 0, suppress);
-    for break_end in sentence_break_candidates(text) {
-        let Some(start) = cursor else {
-            break;
-        };
-        if break_end <= start {
-            continue;
-        }
-        if overlaps_any(start, break_end, suppress) {
-            cursor = next_allowed_nonspace(text, break_end, suppress);
-            continue;
-        }
-        spans.push((start, break_end));
-        cursor = next_allowed_nonspace(text, break_end, suppress);
-    }
-    if let Some(start) = cursor {
-        if start < text.len() && !overlaps_any(start, text.len(), suppress) {
-            spans.push((start, text.len()));
-        }
-    }
-    spans
-}
-
-fn sentence_break_candidates(text: &str) -> Vec<usize> {
-    let mut candidates = Vec::new();
-    for (offset, ch) in text.char_indices() {
-        if !matches!(ch, '.' | '!' | '?' | '…') {
-            continue;
-        }
-        let terminal_end = offset + ch.len_utf8();
-        if previous_char_is_ascii_digit(text, offset)
-            && next_char_is_ascii_digit(text, terminal_end)
-        {
-            continue;
-        }
-        let break_end = absorb_trailing_closers(text, terminal_end);
-        let Some(next_start) = next_nonspace_position(text, break_end, text.len()) else {
-            candidates.push(break_end);
-            continue;
-        };
-        let Some(next_ch) = text[next_start..].chars().next() else {
-            continue;
-        };
-        if next_ch.is_uppercase()
-            || matches!(next_ch, '"' | '\'' | '“' | '‘' | '#' | '-' | '*' | '•')
-        {
-            candidates.push(break_end);
-        }
-    }
-    candidates
 }
 
 fn render_spans(text: &str, spans: &[DecodedSpan]) -> String {
@@ -1390,10 +1346,15 @@ fn render_spans(text: &str, spans: &[DecodedSpan]) -> String {
         closes.entry(span.end).or_default().push(span);
     }
     for values in opens.values_mut() {
-        values.sort_by_key(|span| (label_priority(&span.label), std::cmp::Reverse(span.end)));
+        values.sort_by_key(|span| (std::cmp::Reverse(span.end), label_priority(&span.label)));
     }
     for values in closes.values_mut() {
-        values.sort_by_key(|span| std::cmp::Reverse(label_priority(&span.label)));
+        values.sort_by_key(|span| {
+            (
+                std::cmp::Reverse(span.start),
+                std::cmp::Reverse(label_priority(&span.label)),
+            )
+        });
     }
     let mut rendered = String::new();
     let mut cursor = 0_usize;
@@ -1428,19 +1389,39 @@ fn render_spans(text: &str, spans: &[DecodedSpan]) -> String {
 }
 
 fn remove_crossing_spans(spans: Vec<DecodedSpan>) -> Vec<DecodedSpan> {
+    let mut ordered = spans;
+    ordered.sort_by_key(|span| {
+        (
+            label_priority(&span.label),
+            span.start,
+            std::cmp::Reverse(span.end),
+        )
+    });
     let mut accepted: Vec<DecodedSpan> = Vec::new();
-    'outer: for span in spans {
-        for prior in &accepted {
-            let crosses =
-                span.start < prior.start && prior.start < span.end && span.end < prior.end
-                    || prior.start < span.start && span.start < prior.end && prior.end < span.end;
-            if crosses {
-                continue 'outer;
-            }
+    for span in ordered {
+        if !accepted
+            .iter()
+            .any(|prior| ranges_cross(span.start, span.end, prior.start, prior.end))
+        {
+            accepted.push(span);
         }
-        accepted.push(span);
     }
+    accepted.sort_by_key(|span| (span.start, span.end, label_priority(&span.label)));
     accepted
+}
+
+fn ranges_cross(a_start: usize, a_end: usize, b_start: usize, b_end: usize) -> bool {
+    ranges_overlap(a_start, a_end, b_start, b_end)
+        && !range_contains(a_start, a_end, b_start, b_end)
+        && !range_contains(b_start, b_end, a_start, a_end)
+}
+
+fn ranges_overlap(a_start: usize, a_end: usize, b_start: usize, b_end: usize) -> bool {
+    a_start < b_end && b_start < a_end
+}
+
+fn range_contains(a_start: usize, a_end: usize, b_start: usize, b_end: usize) -> bool {
+    a_start <= b_start && b_end <= a_end
 }
 
 fn label_priority(label: &str) -> usize {
@@ -1484,67 +1465,6 @@ fn previous_nonspace_end(text: &str, start: usize, end: usize) -> Option<usize> 
         .map(|(relative, ch)| start + relative + ch.len_utf8())
 }
 
-fn next_allowed_nonspace(text: &str, offset: usize, suppress: &[DecodedSpan]) -> Option<usize> {
-    let mut cursor = offset;
-    loop {
-        let next = next_nonspace_position(text, cursor, text.len())?;
-        if let Some(span) = suppress
-            .iter()
-            .find(|span| next >= span.start && next < span.end)
-        {
-            cursor = span.end;
-            continue;
-        }
-        return Some(next);
-    }
-}
-
-fn overlaps_any(start: usize, end: usize, spans: &[DecodedSpan]) -> bool {
-    spans
-        .iter()
-        .any(|span| ranges_overlap(start, end, span.start, span.end))
-}
-
-fn ranges_overlap(a_start: usize, a_end: usize, b_start: usize, b_end: usize) -> bool {
-    a_start < b_end && b_start < a_end
-}
-
-fn previous_char_is_ascii_digit(text: &str, offset: usize) -> bool {
-    text[..offset]
-        .chars()
-        .next_back()
-        .is_some_and(|ch| ch.is_ascii_digit())
-}
-
-fn next_char_is_ascii_digit(text: &str, offset: usize) -> bool {
-    text[offset..]
-        .chars()
-        .next()
-        .is_some_and(|ch| ch.is_ascii_digit())
-}
-
-fn char_at(text: &str, offset: usize) -> Option<char> {
-    text[offset.min(text.len())..].chars().next()
-}
-
-fn is_closing_quote_or_bracket_char(ch: char) -> bool {
-    matches!(ch, '"' | '\'' | ')' | ']' | '}' | '>' | '”' | '’' | '»')
-}
-
-fn absorb_trailing_closers(text: &str, offset: usize) -> usize {
-    let mut cursor = offset;
-    while cursor < text.len() {
-        let Some(ch) = char_at(text, cursor) else {
-            break;
-        };
-        if !is_closing_quote_or_bracket_char(ch) {
-            break;
-        }
-        cursor += ch.len_utf8();
-    }
-    cursor
-}
-
 fn snippet(text: &str, start: usize, end: usize, max_chars: usize) -> String {
     let bounded_start = start.min(text.len());
     let bounded_end = end.min(text.len()).max(bounded_start);
@@ -1579,35 +1499,5 @@ mod tests {
                 feature_pos: 3,
             }
         );
-    }
-
-    #[test]
-    fn merged_annotation_suppresses_sentences_inside_metadata() {
-        let text = "Case: X\n\nBody one. Body two.";
-        let spans = vec![DecodedSpan {
-            label: "metadata".to_string(),
-            start: 0,
-            end: 7,
-            score: 1.0,
-        }];
-        let rendered = render_merged_annotation(text, &spans);
-        assert!(rendered.contains("<|metadata|>Case: X</|metadata|>"));
-        assert!(rendered.contains("<|sentence|>Body one.</|sentence|>"));
-        assert!(!rendered.contains("<|sentence|><|metadata|>"));
-    }
-
-    #[test]
-    fn merged_annotation_keeps_sentence_after_section_header() {
-        let text = "# Background\nThe court reviewed the invoices. The vendor objected.";
-        let spans = vec![DecodedSpan {
-            label: "section".to_string(),
-            start: 0,
-            end: 12,
-            score: 1.0,
-        }];
-        let rendered = render_merged_annotation(text, &spans);
-        assert!(rendered.contains("<|section|># Background</|section|>"));
-        assert!(rendered.contains("<|sentence|>The court reviewed the invoices.</|sentence|>"));
-        assert!(rendered.contains("<|sentence|>The vendor objected.</|sentence|>"));
     }
 }

@@ -13,6 +13,12 @@
       "path": "sentence_boundary.mpk",
       "role": "sentence_boundary",
       "sha256": "357380e5c1173d59a6daa488c382e7b14af316b0964ab3dc75b184411aaa1b76"
+    },
+    {
+      "bytes": 1245550,
+      "path": "semantic_structure.mpk",
+      "role": "semantic_structure",
+      "sha256": "d5511cff767027c8f331a577861d9003e3d77acd1cd9e9fd5f2fe5d705f924de"
     }
   ],
   "format": "charstreamer.model-bundle.v1",
@@ -23,23 +29,51 @@
       "false_negatives": 2312,
       "false_positives": 2236,
       "precision": 0.9824295043945312,
-      "recall": 0.9818431735038757,
+      "recall": 0.9818431735038756,
       "true_negatives": 265877,
       "true_positives": 125023
     },
     "validation": {
       "accuracy": 0.9853371381759644,
-      "f1": 0.9772680401802063,
+      "f1": 0.9772680401802064,
       "false_negatives": 847,
       "false_positives": 592,
       "precision": 0.9812206625938416,
-      "recall": 0.9733471870422363,
+      "recall": 0.9733471870422364,
       "true_negatives": 65768,
       "true_positives": 30932
     }
   },
   "name": "charstreamer-default",
-  "task": "sentence_boundary",
+  "structure": {
+    "engine": "burn_multilabel_mlp_structure_v1",
+    "features": {
+      "count_radius": 48,
+      "encoded_left": 0,
+      "encoded_right": 0,
+      "feature_dim": 615,
+      "hidden_dim1": 384,
+      "hidden_dim2": 192,
+      "line_context_metrics": true,
+      "line_ngram_buckets": 512,
+      "line_ngram_max_n": 5,
+      "line_ngram_min_n": 3,
+      "output_dim": 4
+    },
+    "labels": [
+      "paragraph",
+      "metadata",
+      "section",
+      "list_item"
+    ],
+    "thresholds": {
+      "list_item": 0.800000011920929,
+      "metadata": 0.30000001192092896,
+      "paragraph": 0.009999999776482582,
+      "section": 0.9200000166893005
+    }
+  },
+  "task": "combined_segmentation",
   "thresholds": {
     "sentence.end": 0.5899999737739563
   },

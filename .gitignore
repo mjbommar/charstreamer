@@ -16,11 +16,17 @@
 /data/synthetic/
 /crates/charstreamer-python/python/charstreamer/models/default/*
 !/crates/charstreamer-python/python/charstreamer/models/default/.gitkeep
+!/crates/charstreamer-python/python/charstreamer/models/default/manifest.json
+!/crates/charstreamer-python/python/charstreamer/models/default/sentence_boundary.mpk
+!/crates/charstreamer-python/python/charstreamer/models/default/semantic_structure.mpk
+!/crates/charstreamer-python/python/charstreamer/models/default/training-report.json
+!/crates/charstreamer-python/python/charstreamer/models/default/structure-training-report.json
 /logs/
 *.joblib
 *.onnx
 *.safetensors
 *.mpk
+!/crates/charstreamer-python/python/charstreamer/models/default/*.mpk
 
 # Build artifacts
 *.so

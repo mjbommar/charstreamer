@@ -742,6 +742,143 @@ Representative findings:
 
 ## Current Default Candidates
 
+## Semantic Structure Burn Experiments
+
+Date: 2026-04-29.
+
+Task:
+
+- line-candidate multi-label semantic span classification
+- labels: `paragraph`, `metadata`, `section`, `list_item`, `dialogue`
+- normalized alias: `section_heading -> section`
+- base inputs: `data/synthetic/kl3m_streaming_spans_20260429_per_label_5k.jsonl`
+  and `data/generated/kl3m-sample-005-openai-10k.jsonl`
+- model family: Burn MLP over reusable CharStreamer feature kernels
+
+Main in-split results:
+
+| experiment | macro_f1 | paragraph | metadata | section | list_item | dialogue |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: |
+| previous 5-label export | 0.6037 | 0.8560 | 0.8117 | 0.7072 | 0.5131 | 0.1304 |
+| schema alias baseline | 0.5713 | 0.8545 | 0.7908 | 0.7005 | 0.4579 | 0.0526 |
+| larger MLP | 0.5764 | 0.8493 | 0.7899 | 0.6814 | 0.4906 | 0.0706 |
+| larger MLP + line shape metrics | 0.6121 | 0.8568 | 0.8111 | 0.7102 | 0.5256 | 0.1569 |
+| semantic-only, no paragraph | 0.5175 |  | 0.8141 | 0.7176 | 0.4559 | 0.0822 |
+| paragraph-only | 0.8580 | 0.8580 |  |  |  |  |
+| class-weighted BCE | 0.5827 | 0.8541 | 0.8108 | 0.7109 | 0.4809 | 0.0567 |
+| positive-weighted BCE | 0.5803 | 0.8540 | 0.8108 | 0.7037 | 0.4941 | 0.0386 |
+| no dialogue head | 0.7068 | 0.8487 | 0.8109 | 0.7057 | 0.4618 |  |
+| line edge byte windows | 0.5903 | 0.8538 | 0.8072 | 0.7118 | 0.4758 | 0.1031 |
+
+Fixed-source validation results:
+
+| train source | validation source | macro_f1 | paragraph | metadata | section | list_item | dialogue |
+| --- | --- | ---: | ---: | ---: | ---: | ---: | ---: |
+| per-label 5k | OpenAI unit file | 0.3551 | 0.5694 | 0.8260 | 0.0632 | 0.3168 | 0.0000 |
+| OpenAI unit file | per-label 5k | 0.3741 | 0.7891 | 0.6158 | 0.2687 | 0.1967 | 0.0000 |
+
+Interpretation:
+
+- `LineShapeMetricsAppender` is the only clear feature win in this round.
+- Training paragraph separately does not improve quality and worsens qualitative
+  output by absorbing headings into paragraph spans.
+- Removing paragraph from the semantic head does not improve the weak labels.
+- Class weighting, positive-only weighting, and row duplication do not solve
+  the rare-label problem on this data.
+- Dialogue is not releasable with the current data. The validation split has
+  only tens of positive examples, and one fixed validation source has zero
+  dialogue positives.
+- The current synthetic sources are not interchangeable. Fixed-source
+  validation shows severe annotation-protocol mismatch, especially for
+  `section`.
+- Next data work should standardize the annotation protocol before further model
+  tuning: same label schema, same span granularity, enough positive examples per
+  label, and fixed-source validation gates.
+
+Current recommendation:
+
+- keep `paragraph`, `metadata`, `section`, and `list_item` in one joint
+  structure model for now
+- do not rely on `dialogue` until a balanced dialogue-focused dataset exists
+- keep sentence boundary detection as a separate high-frequency boundary model
+  until a true sequence/span model is implemented
+- add fixed-source validation to release gates for semantic models
+
+## Semantic Structure Release Candidate
+
+Date: 2026-04-29.
+
+Default bundle:
+
+- directory: `target/model/charstreamer-default-0.1.1-release`
+- vendored wheel path: `crates/charstreamer-python/python/charstreamer/models/default`
+- archive: `dist-models/charstreamer-default-0.1.1.zip`
+- runtime: `burn_combined_segmentation`
+- structure labels: `paragraph`, `metadata`, `section`, `list_item`
+- sentence boundary model remains a separate Burn shallow MLP
+
+Training data:
+
+- train: `data/generated/kl3m-unit-structure-diverse-train-750-dedup.jsonl`
+- curated train add-on: `data/generated/curated-signature-metadata-80.jsonl`
+- validation: `data/generated/kl3m-unit-structure-diverse-valid-75.jsonl`
+- train/validation source overlap: zero source identifiers
+- sampling: one chunk per source document to avoid long-document dominance
+
+Feature/model configuration:
+
+- `encoded_left=0`, `encoded_right=0`
+- `count_radius=48`
+- `line_ngram_buckets=512`, `line_ngram_min_n=3`, `line_ngram_max_n=5`
+- `line_context_metrics=true`
+- hidden dimensions: `384/192`
+- epochs: `240`
+- learning rate: `0.0005`
+- batch size: `1024`
+
+Fixed-validation metrics:
+
+| label | f1 | precision | recall | threshold |
+| --- | ---: | ---: | ---: | ---: |
+| macro | 0.7458 |  |  |  |
+| paragraph | 0.8050 | 0.7832 | 0.8281 | 0.01 |
+| metadata | 0.8081 | 0.8213 | 0.7952 | 0.30 |
+| section | 0.7210 | 0.8111 | 0.6489 | 0.92 |
+| list_item | 0.6492 | 0.6152 | 0.6873 | 0.80 |
+
+Important iteration notes:
+
+- line byte n-gram hashing improved the fixed-validation gate over shape-only features
+- line context metrics provided useful neighboring-line and coarse position signal
+- wide encoded byte context hurt the structure MLP; reducing it to the current byte
+  improved macro F1 from roughly `0.71` to roughly `0.75`
+- table-heavy/document-form chunks polluted `list_item` supervision; curated
+  signature/date metadata examples fixed a concrete `/s/ Judge` false-positive
+  without adding runtime rules
+- this model intentionally excludes `dialogue`; it needs a separate balanced
+  dataset before being releasable
+
+Verification:
+
+- `cargo test -p charstreamer-backend-burn -p charstreamer-kernels -p charstreamer-segmentation`
+- `uv run --project tools/span-generator python -m pytest tools/span-generator/tests -q`
+- `uvx --with 'maturin[patchelf]' maturin build --release --manifest-path crates/charstreamer-python/Cargo.toml --out dist`
+- `python3 tools/model-artifacts/check_wheel_model.py --require-burn dist/charstreamer-*.whl`
+- `uvx twine check dist/*.whl`
+- isolated wheel smoke test with `CHARSTREAMER_AUTO_DOWNLOAD=0`
+
+Python wheel long-document smoke:
+
+- input: `data/bench/war_and_peace.txt`
+- input chars: `3,227,615`
+- iterations: `3`
+- combined runtime: sentence + structure spans
+- throughput: `129,685 chars/s`
+- throughput: `0.126 MiB/s`
+- span count: `55,494`
+
+## Current Default Candidates
+
 - strongest full-corpus single-thread default candidate: `current_legal_tree_directional_class_counts_window_3_1_full`
 - strongest full-corpus quality-oriented tree candidate: `current_legal_tree_directional_class_counts_window_3_3_full`
 - strongest reduced-sweep default candidate: `current_legal_tree_local_structure`

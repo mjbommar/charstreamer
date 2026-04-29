@@ -8,11 +8,11 @@ use burn::nn::{Linear, LinearConfig, Relu};
 use burn::optim::{AdamConfig, GradientsParams, Optimizer};
 use burn::prelude::*;
 use burn::record::{FullPrecisionSettings, NamedMpkFileRecorder};
-use burn::tensor::activation::sigmoid;
+use burn::tensor::activation::{log_sigmoid, sigmoid};
 use burn::tensor::{TensorData, backend::Backend};
 use charstreamer_core::{
-    BatchPredictor, DatasetView, FeatureMatrixView, FitError, FitScratch, PredictError,
-    TrainablePredictor,
+    BatchPredictor, BatchScorer, DatasetView, FeatureMatrixView, FitError, FitScratch,
+    PredictError, ScoreMatrixViewMut, TrainablePredictor,
 };
 use rand::SeedableRng;
 use rand::rngs::SmallRng;
@@ -113,6 +113,50 @@ pub struct BurnDeepMlpFitReport {
     pub cols: usize,
     pub hidden_dim1: usize,
     pub hidden_dim2: usize,
+    pub epochs: usize,
+    pub batch_size: usize,
+    pub learning_rate: f64,
+    pub seed: u64,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct BurnMultiLabelMlpFitOptions {
+    pub hidden_dim1: usize,
+    pub hidden_dim2: usize,
+    pub output_dim: usize,
+    pub class_weights: Vec<f32>,
+    pub positive_weights: Vec<f32>,
+    pub epochs: usize,
+    pub batch_size: usize,
+    pub learning_rate: f64,
+    pub seed: u64,
+}
+
+impl Default for BurnMultiLabelMlpFitOptions {
+    fn default() -> Self {
+        Self {
+            hidden_dim1: 96,
+            hidden_dim2: 48,
+            output_dim: 1,
+            class_weights: Vec::new(),
+            positive_weights: Vec::new(),
+            epochs: 20,
+            batch_size: 512,
+            learning_rate: 1.0e-3,
+            seed: 29,
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Serialize, Deserialize)]
+pub struct BurnMultiLabelMlpFitReport {
+    pub rows: usize,
+    pub cols: usize,
+    pub output_dim: usize,
+    pub hidden_dim1: usize,
+    pub hidden_dim2: usize,
+    pub class_weights_len: usize,
+    pub positive_weights_len: usize,
     pub epochs: usize,
     pub batch_size: usize,
     pub learning_rate: f64,
@@ -340,6 +384,39 @@ impl<B: Backend> BinaryLogitModule<B> for WindowCnn<B> {
     }
 }
 
+#[derive(Module, Debug)]
+struct MultiLabelMlp<B: Backend> {
+    input: Linear<B>,
+    activation1: Relu,
+    hidden2: Linear<B>,
+    activation2: Relu,
+    output: Linear<B>,
+}
+
+impl<B: Backend> MultiLabelMlp<B> {
+    fn new(
+        input_dim: usize,
+        hidden_dim1: usize,
+        hidden_dim2: usize,
+        output_dim: usize,
+        device: &B::Device,
+    ) -> Self {
+        Self {
+            input: LinearConfig::new(input_dim, hidden_dim1).init(device),
+            activation1: Relu::new(),
+            hidden2: LinearConfig::new(hidden_dim1, hidden_dim2).init(device),
+            activation2: Relu::new(),
+            output: LinearConfig::new(hidden_dim2, output_dim).init(device),
+        }
+    }
+
+    fn forward_logits(&self, input: Tensor<B, 2>) -> Tensor<B, 2> {
+        let hidden1 = self.activation1.forward(self.input.forward(input));
+        let hidden2 = self.activation2.forward(self.hidden2.forward(hidden1));
+        self.output.forward(hidden2)
+    }
+}
+
 #[derive(Debug)]
 pub struct BurnShallowMlpModel {
     model: ShallowMlp<InferBackend>,
@@ -348,6 +425,12 @@ pub struct BurnShallowMlpModel {
 #[derive(Debug)]
 pub struct BurnDeepMlpModel {
     model: DeepMlp<InferBackend>,
+}
+
+#[derive(Debug)]
+pub struct BurnMultiLabelMlpModel {
+    model: MultiLabelMlp<InferBackend>,
+    output_dim: usize,
 }
 
 #[derive(Debug)]
@@ -483,6 +566,185 @@ impl BurnShallowMlpModel {
     }
 }
 
+impl BurnMultiLabelMlpModel {
+    pub fn save_named_mpk(&self, path: impl AsRef<Path>) -> Result<(), BurnModelIoError> {
+        let recorder = NamedMpkFileRecorder::<FullPrecisionSettings>::new();
+        self.model
+            .clone()
+            .save_file(path.as_ref().to_path_buf(), &recorder)?;
+        Ok(())
+    }
+
+    pub fn load_named_mpk(
+        input_dim: usize,
+        hidden_dim1: usize,
+        hidden_dim2: usize,
+        output_dim: usize,
+        path: impl AsRef<Path>,
+    ) -> Result<Self, BurnModelIoError> {
+        if input_dim == 0 || hidden_dim1 == 0 || hidden_dim2 == 0 || output_dim == 0 {
+            return Err(BurnModelIoError::new(
+                "burn multi-label MLP load requires positive dimensions",
+            ));
+        }
+        let device = Default::default();
+        let recorder = NamedMpkFileRecorder::<FullPrecisionSettings>::new();
+        let model = MultiLabelMlp::new(input_dim, hidden_dim1, hidden_dim2, output_dim, &device)
+            .load_file(path.as_ref().to_path_buf(), &recorder, &device)?;
+        Ok(Self { model, output_dim })
+    }
+
+    pub fn fit_multilabel(
+        features: FeatureMatrixView<'_, f32>,
+        targets: &[u8],
+        options: &BurnMultiLabelMlpFitOptions,
+        scratch: &mut FitScratch,
+    ) -> Result<(Self, BurnMultiLabelMlpFitReport), FitError> {
+        if features.rows == 0 || features.cols == 0 {
+            return Err(FitError::new(
+                "burn multi-label MLP training requires non-empty features",
+            ));
+        }
+        if options.output_dim == 0
+            || options.hidden_dim1 == 0
+            || options.hidden_dim2 == 0
+            || options.epochs == 0
+            || options.batch_size == 0
+        {
+            return Err(FitError::new(
+                "burn multi-label MLP options must use positive dimensions, epochs, and batch_size",
+            ));
+        }
+        if targets.len() != features.rows * options.output_dim {
+            return Err(FitError::new(
+                "multi-label targets must contain rows * output_dim values",
+            ));
+        }
+        if !options.class_weights.is_empty() && options.class_weights.len() != options.output_dim {
+            return Err(FitError::new(
+                "multi-label class weights must be empty or contain output_dim values",
+            ));
+        }
+        if !options.positive_weights.is_empty()
+            && options.positive_weights.len() != options.output_dim
+        {
+            return Err(FitError::new(
+                "multi-label positive weights must be empty or contain output_dim values",
+            ));
+        }
+
+        let device = Default::default();
+        TrainBackend::seed(&device, options.seed);
+        let mut model = MultiLabelMlp::<TrainBackend>::new(
+            features.cols,
+            options.hidden_dim1,
+            options.hidden_dim2,
+            options.output_dim,
+            &device,
+        );
+        let mut optimizer = AdamConfig::new().init();
+        let loss_fn = BinaryCrossEntropyLossConfig::new()
+            .with_logits(true)
+            .with_weights(if options.class_weights.is_empty() {
+                None
+            } else {
+                Some(options.class_weights.clone())
+            })
+            .init(&device);
+        let positive_weights = if options.positive_weights.is_empty() {
+            None
+        } else {
+            Some(Tensor::<TrainBackend, 1>::from_floats(
+                options.positive_weights.as_slice(),
+                &device,
+            ))
+        };
+
+        scratch.indices.resize(features.rows, 0);
+        for (index, slot) in scratch.indices.iter_mut().enumerate() {
+            *slot = index;
+        }
+        let mut rng = SmallRng::seed_from_u64(options.seed);
+        let mut batch_targets = Vec::new();
+
+        for _epoch in 0..options.epochs {
+            scratch.indices.shuffle(&mut rng);
+            for batch_rows in scratch.indices.chunks(options.batch_size) {
+                gather_batch_features(features, batch_rows, &mut scratch.floats);
+                gather_batch_multilabel_targets(
+                    targets,
+                    options.output_dim,
+                    batch_rows,
+                    &mut batch_targets,
+                );
+
+                let batch_features = Tensor::<TrainBackend, 2>::from_data(
+                    TensorData::new(scratch.floats.clone(), [batch_rows.len(), features.cols]),
+                    &device,
+                );
+                let batch_targets = Tensor::<TrainBackend, 2, Int>::from_data(
+                    TensorData::new(
+                        batch_targets.clone(),
+                        [batch_rows.len(), options.output_dim],
+                    ),
+                    &device,
+                );
+                let logits = model.forward_logits(batch_features);
+                let loss = if let Some(positive_weights) = &positive_weights {
+                    positive_weighted_bce_logits(logits, batch_targets, positive_weights.clone())
+                } else {
+                    loss_fn.forward(logits, batch_targets)
+                };
+                let grads = loss.backward();
+                let grads = GradientsParams::from_grads(grads, &model);
+                model = optimizer.step(options.learning_rate, model, grads);
+            }
+        }
+
+        Ok((
+            Self {
+                model: model.valid(),
+                output_dim: options.output_dim,
+            },
+            BurnMultiLabelMlpFitReport {
+                rows: features.rows,
+                cols: features.cols,
+                output_dim: options.output_dim,
+                hidden_dim1: options.hidden_dim1,
+                hidden_dim2: options.hidden_dim2,
+                class_weights_len: options.class_weights.len(),
+                positive_weights_len: options.positive_weights.len(),
+                epochs: options.epochs,
+                batch_size: options.batch_size,
+                learning_rate: options.learning_rate,
+                seed: options.seed,
+            },
+        ))
+    }
+
+    pub fn predict_flat_into(
+        &self,
+        features: FeatureMatrixView<'_, f32>,
+        out: &mut [f32],
+    ) -> Result<(), PredictError> {
+        let required = features.rows * self.output_dim;
+        if out.len() < required {
+            return Err(PredictError::new("score output buffer is too small"));
+        }
+        if features.rows == 0 {
+            return Ok(());
+        }
+        let device = Default::default();
+        let inputs = matrix_to_tensor::<InferBackend>(features, &device);
+        let scores = sigmoid(self.model.forward_logits(inputs))
+            .into_data()
+            .to_vec::<f32>()
+            .map_err(|error| PredictError::new(format!("burn tensor readback failed: {error}")))?;
+        out[..required].copy_from_slice(&scores[..required]);
+        Ok(())
+    }
+}
+
 fn matrix_to_tensor<B: Backend>(
     features: FeatureMatrixView<'_, f32>,
     device: &B::Device,
@@ -515,6 +777,38 @@ fn gather_batch_labels(labels: &[u8], rows: &[usize], scratch: &mut Vec<u8>) {
     scratch.reserve(rows.len());
     for &row in rows {
         scratch.push(labels[row]);
+    }
+}
+
+fn positive_weighted_bce_logits(
+    logits: Tensor<TrainBackend, 2>,
+    targets: Tensor<TrainBackend, 2, Int>,
+    positive_weights: Tensor<TrainBackend, 1>,
+) -> Tensor<TrainBackend, 1> {
+    let targets_float = targets.float();
+    let shape = targets_float.dims();
+    let positive_weights = positive_weights.expand(shape);
+    let positive_scale = (positive_weights - 1.0) * targets_float.clone() + 1.0;
+    let negative_scale = targets_float.neg() + 1.0;
+    (negative_scale * logits.clone() - positive_scale * log_sigmoid(logits)).mean()
+}
+
+fn gather_batch_multilabel_targets(
+    targets: &[u8],
+    output_dim: usize,
+    rows: &[usize],
+    scratch: &mut Vec<i64>,
+) {
+    scratch.clear();
+    scratch.reserve(rows.len() * output_dim);
+    for &row in rows {
+        let start = row * output_dim;
+        scratch.extend(
+            targets[start..start + output_dim]
+                .iter()
+                .copied()
+                .map(i64::from),
+        );
     }
 }
 
@@ -660,6 +954,32 @@ impl BatchPredictor<f32, f32> for BurnDeepMlpModel {
         out: &mut [f32],
     ) -> Result<(), PredictError> {
         predict_probabilities(&self.model, features, out)
+    }
+}
+
+impl BatchScorer<f32, f32> for BurnMultiLabelMlpModel {
+    fn score_dim(&self) -> usize {
+        self.output_dim
+    }
+
+    fn score_into(
+        &self,
+        features: FeatureMatrixView<'_, f32>,
+        mut out: ScoreMatrixViewMut<'_, f32>,
+    ) -> Result<(), PredictError> {
+        if out.rows != features.rows || out.cols != self.output_dim {
+            return Err(PredictError::new(
+                "multi-label score output shape does not match model",
+            ));
+        }
+        let mut flat = vec![0.0_f32; features.rows * self.output_dim];
+        self.predict_flat_into(features, &mut flat)?;
+        for row in 0..out.rows {
+            let start = row * self.output_dim;
+            out.row_mut(row)
+                .copy_from_slice(&flat[start..start + self.output_dim]);
+        }
+        Ok(())
     }
 }
 
@@ -951,7 +1271,8 @@ mod tests {
     };
 
     use crate::{
-        BurnDeepMlpFitOptions, BurnDeepMlpModel, BurnShallowMlpFitOptions, BurnShallowMlpModel,
+        BurnDeepMlpFitOptions, BurnDeepMlpModel, BurnMultiLabelMlpFitOptions,
+        BurnMultiLabelMlpModel, BurnShallowMlpFitOptions, BurnShallowMlpModel,
         BurnWindowCnnFitOptions, BurnWindowCnnModel, BurnWindowGruFitOptions, BurnWindowGruModel,
         BurnWindowLstmFitOptions, BurnWindowLstmModel,
     };
@@ -1041,6 +1362,36 @@ mod tests {
             .predict_into(features.as_view(), &mut out)
             .expect("burn deep mlp prediction should succeed");
         assert_positive_rows_score_higher(&out);
+    }
+
+    #[test]
+    fn burn_multi_label_mlp_fits_simple_dataset() {
+        let _guard = burn_test_lock();
+        let (features, _) = simple_dataset();
+        let labels = vec![0, 1, 1, 0, 1, 1, 0, 0];
+        let (model, report) = BurnMultiLabelMlpModel::fit_multilabel(
+            features.as_view(),
+            &labels,
+            &BurnMultiLabelMlpFitOptions {
+                hidden_dim1: 8,
+                hidden_dim2: 4,
+                output_dim: 2,
+                class_weights: Vec::new(),
+                positive_weights: Vec::new(),
+                epochs: 25,
+                batch_size: 2,
+                learning_rate: 0.01,
+                seed: 13,
+            },
+            &mut FitScratch::default(),
+        )
+        .expect("multi-label MLP should fit");
+        let mut scores = vec![0.0; labels.len()];
+        model
+            .predict_flat_into(features.as_view(), &mut scores)
+            .expect("prediction should succeed");
+        assert_eq!(report.output_dim, 2);
+        assert!(scores.iter().all(|score| (0.0..=1.0).contains(score)));
     }
 
     #[test]
