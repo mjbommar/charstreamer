@@ -47,7 +47,7 @@ print(annotation["tagged"])
 ```
 
 Output is a dictionary with scored spans and a rendered tagged string. Exact
-scores and semantic labels depend on the model version. Abridged `v0.1.2`
+scores and semantic labels depend on the model version. Abridged `v0.1.3`
 output for the text above looks like:
 
 ```text
@@ -101,7 +101,7 @@ Useful environment variables:
 
 ## Current Release
 
-`v0.1.2` is the current model-backed release. It vendors a Burn
+`v0.1.3` is the current model-backed release. It vendors a Burn
 sentence-boundary model and a Burn semantic-structure model.
 
 Current default bundle metrics:
@@ -174,7 +174,7 @@ Build a local wheel from the checked-in vendored model:
 ```bash
 python3 tools/model-artifacts/vendor_model.py \
   --require-burn \
-  --archive-out dist-models/charstreamer-default-0.1.2.zip \
+  --archive-out dist-models/charstreamer-default-0.1.3.zip \
   crates/charstreamer-python/python/charstreamer/models/default
 
 uvx --with 'maturin[patchelf]' maturin build \
@@ -217,7 +217,7 @@ Run the manual GitHub Actions release workflow:
 
 ```bash
 gh workflow run Release \
-  -f tag=v0.1.2
+  -f tag=v0.1.3
 ```
 
 By default, the workflow creates the normalized
@@ -227,8 +227,8 @@ bundle:
 
 ```bash
 gh workflow run Release \
-  -f tag=v0.1.2 \
-  -f model_artifact_url=https://.../charstreamer-default-0.1.2.zip
+  -f tag=v0.1.3 \
+  -f model_artifact_url=https://.../charstreamer-default-0.1.3.zip
 ```
 
 The workflow fails if any wheel lacks a supported Burn model bundle or if the

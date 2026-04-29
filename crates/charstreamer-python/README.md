@@ -7,7 +7,7 @@ This package exposes the Rust model artifact loader and model-backed
 segmentation runtime. If no supported model is available, annotation fails
 instead of synthesizing semantic labels from hard-coded rules.
 
-The vendored `0.1.2` bundle emits model-backed `sentence`, `paragraph`,
+The vendored `0.1.3` bundle emits model-backed `sentence`, `paragraph`,
 `metadata`, `section`, and `list_item` spans. `dialogue` remains reserved until
 there is a balanced dialogue training set.
 
@@ -46,7 +46,7 @@ segmenter = charstreamer.Segmenter.default(require_model=True)
 Model-backed release wheels must include
 `charstreamer/models/default/manifest.json` plus the referenced Burn payload.
 
-The vendored `0.1.2` bundle combines a sentence-boundary model with a semantic
+The vendored `0.1.3` bundle combines a sentence-boundary model with a semantic
 structure model. It is an early model-backed release, not a final semantic
 span/IOB model, and quality should be evaluated against task-specific data
 before production use.

@@ -1,5 +1,26 @@
 # Changelog
 
+## 0.1.3 - Cross-Platform Wheel Release
+
+This release republishes the current model-backed CharStreamer package with a
+full platform wheel matrix and corrected release automation.
+
+Included:
+
+- Linux x86_64 and aarch64 wheels
+- macOS x86_64 and arm64 wheels
+- Windows x86_64 and arm64 wheels
+- source distribution
+- one validated default Burn model bundle reused across all wheels
+- offline model smoke tests for every platform wheel
+- fixed macOS OpenBLAS/GCC runtime library bundling
+
+Known status:
+
+- the default semantic model remains the `paragraph`, `metadata`, `section`,
+  and `list_item` checkpoint from `0.1.2`
+- `dialogue` remains reserved until a balanced dialogue training set exists
+
 ## 0.1.2 - Combined Semantic Model Wheel
 
 This release corrects the Python package metadata and makes the combined
