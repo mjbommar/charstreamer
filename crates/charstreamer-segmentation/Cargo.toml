@@ -1,0 +1,22 @@
+[package]
+name = "charstreamer-segmentation"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+repository.workspace = true
+homepage.workspace = true
+description = "Rule-based semantic segmentation utilities for CharStreamer"
+
+[dependencies]
+serde.workspace = true
+
+[dev-dependencies]
+criterion.workspace = true
+
+[[bench]]
+name = "long_document"
+harness = false
+
+[lints]
+workspace = true

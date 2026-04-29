@@ -1,0 +1,27 @@
+[project]
+name = "charstreamer-span-generator"
+version = "0.1.0"
+description = "Streaming span annotation utility for weak-labeling structural document segmentation data"
+readme = "README.md"
+requires-python = ">=3.14"
+authors = [{ name = "Michael Bommarito" }]
+license = "MIT OR Apache-2.0"
+dependencies = [
+    "datasets>=4.8.5",
+    "openai>=2.32.0",
+    "orjson>=3.11.8",
+    "pydantic>=2.13.3",
+]
+
+[project.scripts]
+charstreamer-span-generator = "charstreamer_span_generator:main"
+charstreamer-span-generator-legacy = "charstreamer_span_generator.cli:main"
+
+[build-system]
+requires = ["uv_build>=0.11.1,<0.12.0"]
+build-backend = "uv_build"
+
+[dependency-groups]
+dev = [
+    "pytest>=9.0.3",
+]

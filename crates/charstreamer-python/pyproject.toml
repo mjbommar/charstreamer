@@ -1,0 +1,32 @@
+[build-system]
+requires = ["maturin>=1.8,<2.0"]
+build-backend = "maturin"
+
+[project]
+name = "charstreamer"
+version = "0.1.0"
+description = "Fast Rust/PyO3 semantic text segmentation"
+readme = "README.md"
+requires-python = ">=3.9"
+authors = [{ name = "Michael Bommarito" }]
+license = "MIT OR Apache-2.0"
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "License :: OSI Approved :: Apache Software License",
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Rust",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3 :: Only",
+    "Topic :: Text Processing :: Linguistic",
+]
+
+[project.urls]
+Homepage = "https://github.com/mjbommar/charstreamer"
+Repository = "https://github.com/mjbommar/charstreamer"
+Documentation = "https://github.com/mjbommar/charstreamer/tree/master/docs"
+Issues = "https://github.com/mjbommar/charstreamer/issues"
+
+[tool.maturin]
+bindings = "pyo3"
+manifest-path = "Cargo.toml"
+module-name = "charstreamer"

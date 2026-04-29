@@ -1,0 +1,18 @@
+[package]
+name = "charstreamer-backend-burn"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+repository.workspace = true
+homepage.workspace = true
+description = "Burn neural model backend for CharStreamer"
+
+[dependencies]
+burn.workspace = true
+charstreamer-core = { path = "../charstreamer-core", version = "0.1.0" }
+rand.workspace = true
+serde.workspace = true
+
+[lints]
+workspace = true

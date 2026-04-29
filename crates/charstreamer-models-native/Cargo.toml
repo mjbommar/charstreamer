@@ -1,0 +1,25 @@
+[package]
+name = "charstreamer-models-native"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+repository.workspace = true
+homepage.workspace = true
+description = "Native CPU model training and inference primitives for CharStreamer"
+
+[dependencies]
+charstreamer-core = { path = "../charstreamer-core", version = "0.1.0" }
+rand.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+
+[dev-dependencies]
+criterion.workspace = true
+
+[[bench]]
+name = "logistic"
+harness = false
+
+[lints]
+workspace = true

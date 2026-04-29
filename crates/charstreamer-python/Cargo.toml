@@ -1,0 +1,22 @@
+[package]
+name = "charstreamer-python"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+repository.workspace = true
+homepage.workspace = true
+description = "PyO3 extension module for CharStreamer"
+publish = false
+
+[lib]
+name = "charstreamer"
+crate-type = ["cdylib"]
+
+[dependencies]
+charstreamer-segmentation = { path = "../charstreamer-segmentation", version = "0.1.0" }
+pyo3.workspace = true
+serde_json.workspace = true
+
+[lints]
+workspace = true

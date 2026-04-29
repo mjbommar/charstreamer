@@ -1,0 +1,96 @@
+{
+  "name": "current_legal_burn_window_lstm_directional_full",
+  "training_path": "../../../legal-sentence-paper/data/alea-legal-benchmark/train.jsonl",
+  "training_format": "Alea",
+  "training_limit": null,
+  "split_numerator": 9,
+  "split_denominator": 10,
+  "scanner": {
+    "ByteSet": {
+      "bytes": [
+        46,
+        63,
+        33,
+        59,
+        58,
+        34,
+        39,
+        10,
+        13
+      ]
+    }
+  },
+  "features": [
+    {
+      "EncodedByteWindow": {
+        "left": 5,
+        "right": 3
+      }
+    },
+    "AsciiNeighborClasses",
+    "LegalBoundaryHeuristics",
+    {
+      "DirectionalByteClassCounts": {
+        "left": 12,
+        "right": 12,
+        "classes": [
+          "AsciiUpper",
+          "AsciiLower",
+          "AsciiDigit",
+          "AsciiWhitespace",
+          "LineBreak"
+        ]
+      }
+    }
+  ],
+  "model": {
+    "BurnWindowLstm": {
+      "fit": {
+        "sequence_len": 9,
+        "hidden_dim": 16,
+        "projection_dim": 32,
+        "epochs": 14,
+        "batch_size": 512,
+        "learning_rate": 0.001,
+        "seed": 7
+      }
+    }
+  },
+  "dataset_options": {
+    "negative_keep_rate": 1.0,
+    "seed": 7,
+    "position_policy": "ScannedCandidatesOnly"
+  },
+  "validation_throughput_iterations": 1,
+  "evaluation_corpora": [
+    {
+      "name": "scotus",
+      "path": "../../../legal-sentence-paper/data/MultiLegalSBD/CD_scotus.jsonl",
+      "format": "MultiLegal",
+      "limit": null,
+      "throughput_iterations": 1
+    },
+    {
+      "name": "bva",
+      "path": "../../../legal-sentence-paper/data/MultiLegalSBD/CD_bva.jsonl",
+      "format": "MultiLegal",
+      "limit": null,
+      "throughput_iterations": 1
+    },
+    {
+      "name": "cyber_crime",
+      "path": "../../../legal-sentence-paper/data/MultiLegalSBD/CD_cyber_crime.jsonl",
+      "format": "MultiLegal",
+      "limit": null,
+      "throughput_iterations": 1
+    },
+    {
+      "name": "intellectual_property",
+      "path": "../../../legal-sentence-paper/data/MultiLegalSBD/CD_intellectual_property.jsonl",
+      "format": "MultiLegal",
+      "limit": null,
+      "throughput_iterations": 1
+    }
+  ],
+  "threshold_policy": "TuneOnValidation"
+}

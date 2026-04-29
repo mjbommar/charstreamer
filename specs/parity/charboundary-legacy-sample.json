@@ -1,0 +1,16 @@
+{
+  "text": "Dr. Smith said: \"Alpha; beta, and gamma.\"\n(a) Item one.",
+  "char_positions": [
+    2,
+    14,
+    22,
+    39,
+    40,
+    41,
+    44,
+    54
+  ],
+  "left_window": 5,
+  "right_window": 3,
+  "constants_py_path": "../../../charboundary/charboundary/constants.py"
+}

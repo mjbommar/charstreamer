@@ -1,0 +1,41 @@
+[workspace]
+members = [
+    "crates/charstreamer-core",
+    "crates/charstreamer-kernels",
+    "crates/charstreamer-segmentation",
+    "crates/charstreamer-models-native",
+    "crates/charstreamer-backend-burn",
+    "crates/charstreamer-experiments",
+    "crates/charstreamer-python",
+]
+resolver = "3"
+
+[workspace.package]
+edition = "2024"
+version = "0.1.0"
+license = "MIT OR Apache-2.0"
+rust-version = "1.89"
+authors = ["Michael Bommarito"]
+repository = "https://github.com/mjbommar/charstreamer"
+homepage = "https://github.com/mjbommar/charstreamer"
+readme = "README.md"
+
+[workspace.dependencies]
+criterion = { version = "0.5.1", default-features = false, features = ["cargo_bench_support"] }
+burn = { version = "=0.20.0", default-features = false, features = ["train", "ndarray", "openblas-system"] }
+icu = "1.5.0"
+memchr = "2.7.6"
+rand = { version = "0.9.2", features = ["small_rng"] }
+serde = { version = "1.0.228", features = ["derive"] }
+serde_json = "1.0.145"
+pyo3 = { version = "0.27.2", features = ["extension-module", "abi3-py39"] }
+
+[workspace.lints.rust]
+unsafe_op_in_unsafe_fn = "deny"
+unused_lifetimes = "warn"
+unused_qualifications = "warn"
+
+[workspace.lints.clippy]
+dbg_macro = "warn"
+todo = "warn"
+unwrap_used = "warn"

@@ -1,0 +1,77 @@
+{
+  "name": "charboundary_small_python_rf_full",
+  "training_path": "../../../legal-sentence-paper/data/alea-legal-benchmark/train.jsonl",
+  "training_format": "Alea",
+  "training_limit": null,
+  "split_numerator": 1,
+  "split_denominator": 1,
+  "scanner": {
+    "CharBoundarySentenceCandidates": {
+      "constants_py_path": "../../../charboundary/charboundary/constants.py"
+    }
+  },
+  "features": [
+    {
+      "CharBoundaryLegacy": {
+        "left_window": 5,
+        "right_window": 3,
+        "constants_py_path": "../../../charboundary/charboundary/constants.py"
+      }
+    }
+  ],
+  "model": {
+    "PythonSklearnRandomForest": {
+      "fit": {
+        "n_estimators": 32,
+        "max_depth": 16,
+        "min_samples_split": 8,
+        "min_samples_leaf": 4,
+        "max_features": null,
+        "class_weight": "balanced_subsample",
+        "n_jobs": -1,
+        "random_state": null
+      }
+    }
+  },
+  "dataset_options": {
+    "negative_keep_rate": 0.001,
+    "seed": null,
+    "position_policy": "AllUtf8ScalarPositions"
+  },
+  "validation_throughput_iterations": 1,
+  "evaluation_corpora": [
+    {
+      "name": "scotus",
+      "path": "../../../legal-sentence-paper/data/MultiLegalSBD/CD_scotus.jsonl",
+      "format": "MultiLegal",
+      "limit": null,
+      "throughput_iterations": 1
+    },
+    {
+      "name": "bva",
+      "path": "../../../legal-sentence-paper/data/MultiLegalSBD/CD_bva.jsonl",
+      "format": "MultiLegal",
+      "limit": null,
+      "throughput_iterations": 1
+    },
+    {
+      "name": "cyber_crime",
+      "path": "../../../legal-sentence-paper/data/MultiLegalSBD/CD_cyber_crime.jsonl",
+      "format": "MultiLegal",
+      "limit": null,
+      "throughput_iterations": 1
+    },
+    {
+      "name": "intellectual_property",
+      "path": "../../../legal-sentence-paper/data/MultiLegalSBD/CD_intellectual_property.jsonl",
+      "format": "MultiLegal",
+      "limit": null,
+      "throughput_iterations": 1
+    }
+  ],
+  "threshold_policy": {
+    "Fixed": {
+      "value": 0.5
+    }
+  }
+}

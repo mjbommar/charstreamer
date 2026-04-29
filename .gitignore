@@ -1,0 +1,32 @@
+/target/
+/dist/
+
+# Local Python environments and caches
+.venv/
+.venv-*/
+**/.venv/
+**/.pytest_cache/
+**/__pycache__/
+*.py[cod]
+
+# Generated data, model artifacts, and run logs
+/data/bench/*.txt
+/data/generated/
+/data/synthetic/
+/logs/
+*.joblib
+*.onnx
+*.safetensors
+
+# Build artifacts
+*.so
+*.dylib
+*.dll
+*.rlib
+*.whl
+
+# Local secrets/configuration
+.env
+.env.*
+env.json
+*.local.json

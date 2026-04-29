@@ -1,0 +1,51 @@
+{
+  "name": "current_legal_logistic",
+  "training_path": "../../../legal-sentence-paper/data/alea-legal-benchmark/train.jsonl",
+  "training_format": "Alea",
+  "training_limit": 500,
+  "split_numerator": 9,
+  "split_denominator": 10,
+  "scanner": {
+    "ByteSet": {
+      "bytes": [46, 63, 33, 59, 58, 34, 39, 10, 13]
+    }
+  },
+  "features": [
+    {
+      "EncodedByteWindow": {
+        "left": 5,
+        "right": 3
+      }
+    },
+    "AsciiNeighborClasses",
+    "LegalBoundaryHeuristics"
+  ],
+  "model": {
+    "NativeLogistic": {
+      "fit": {
+        "epochs": 30,
+        "learning_rate": 0.05,
+        "l2": 0.0001,
+        "batch_size": 512,
+        "shuffle": true,
+        "seed": 7,
+        "positive_class_weight": null
+      }
+    }
+  },
+  "dataset_options": {
+    "negative_keep_rate": 1.0,
+    "seed": 7,
+    "position_policy": "ScannedCandidatesOnly"
+  },
+  "validation_throughput_iterations": 1,
+  "evaluation_corpora": [
+    {
+      "name": "scotus",
+      "path": "../../../legal-sentence-paper/data/MultiLegalSBD/CD_scotus.jsonl",
+      "format": "MultiLegal",
+      "limit": 20,
+      "throughput_iterations": 1
+    }
+  ]
+}

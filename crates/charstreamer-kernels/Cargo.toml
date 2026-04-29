@@ -1,0 +1,25 @@
+[package]
+name = "charstreamer-kernels"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+repository.workspace = true
+homepage.workspace = true
+description = "Reusable byte, Unicode, scanning, and feature kernels for CharStreamer"
+
+[dependencies]
+charstreamer-core = { path = "../charstreamer-core", version = "0.1.0" }
+icu.workspace = true
+memchr.workspace = true
+serde.workspace = true
+
+[dev-dependencies]
+criterion.workspace = true
+
+[[bench]]
+name = "primitives"
+harness = false
+
+[lints]
+workspace = true

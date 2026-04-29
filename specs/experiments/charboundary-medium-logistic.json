@@ -1,0 +1,50 @@
+{
+  "name": "charboundary_medium_logistic",
+  "training_path": "../../../legal-sentence-paper/data/alea-legal-benchmark/train.jsonl",
+  "training_format": "Alea",
+  "training_limit": 500,
+  "split_numerator": 9,
+  "split_denominator": 10,
+  "scanner": {
+    "CharBoundarySentenceCandidates": {
+      "constants_py_path": "../../../charboundary/charboundary/constants.py"
+    }
+  },
+  "features": [
+    {
+      "CharBoundaryLegacy": {
+        "left_window": 7,
+        "right_window": 5,
+        "constants_py_path": "../../../charboundary/charboundary/constants.py"
+      }
+    }
+  ],
+  "model": {
+    "NativeLogistic": {
+      "fit": {
+        "epochs": 30,
+        "learning_rate": 0.05,
+        "l2": 0.0001,
+        "batch_size": 512,
+        "shuffle": true,
+        "seed": 7,
+        "positive_class_weight": null
+      }
+    }
+  },
+  "dataset_options": {
+    "negative_keep_rate": 0.001,
+    "seed": 7,
+    "position_policy": "AllUtf8ScalarPositions"
+  },
+  "validation_throughput_iterations": 1,
+  "evaluation_corpora": [
+    {
+      "name": "scotus",
+      "path": "../../../legal-sentence-paper/data/MultiLegalSBD/CD_scotus.jsonl",
+      "format": "MultiLegal",
+      "limit": 20,
+      "throughput_iterations": 1
+    }
+  ]
+}
