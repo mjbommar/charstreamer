@@ -7,7 +7,7 @@ This package exposes the Rust model artifact loader and model-backed
 segmentation runtime. If no supported model is available, annotation fails
 instead of synthesizing semantic labels from hard-coded rules.
 
-The vendored `0.1.3` bundle emits model-backed `sentence`, `paragraph`,
+The vendored `0.1.4` bundle emits model-backed `sentence`, `paragraph`,
 `metadata`, `section`, and `list_item` spans. `dialogue` remains reserved until
 there is a balanced dialogue training set.
 
@@ -26,12 +26,17 @@ text = """# Background
 The court reviewed the invoice. The shipment was late. Notice was timely."""
 
 segmenter = charstreamer.Segmenter.default()
-print(segmenter.model_info())
+print(segmenter.model_info().runtime)
 annotation = segmenter.annotate(text)
 
-print(annotation["spans"])
-print(annotation["tagged"])
+print(annotation.spans)
+print(annotation.tagged)
 ```
+
+The public Python wrapper returns typed immutable dataclasses:
+`ModelInfo`, `Annotation`, `Span`, and `BenchmarkResult`. For JSON output or
+legacy integrations, call `.to_dict()` or use methods such as
+`segmenter.annotate_dict(text)`.
 
 If a default model is vendored into the wheel, `Segmenter.default()` loads it
 from package data. If not, it checks the local cache and then the GitHub release
@@ -46,7 +51,7 @@ segmenter = charstreamer.Segmenter.default(require_model=True)
 Model-backed release wheels must include
 `charstreamer/models/default/manifest.json` plus the referenced Burn payload.
 
-The vendored `0.1.3` bundle combines a sentence-boundary model with a semantic
+The vendored `0.1.4` bundle combines a sentence-boundary model with a semantic
 structure model. It is an early model-backed release, not a final semantic
 span/IOB model, and quality should be evaluated against task-specific data
 before production use.

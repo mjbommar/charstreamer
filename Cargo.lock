@@ -491,7 +491,7 @@ checksum = "613afe47fcd5fac7ccf1db93babcb082c5994d996f20b8b159f2ad1658eb5724"
 
 [[package]]
 name = "charstreamer-backend-burn"
-version = "0.1.3"
+version = "0.1.4"
 dependencies = [
  "burn",
  "charstreamer-core",
@@ -501,7 +501,7 @@ dependencies = [
 
 [[package]]
 name = "charstreamer-core"
-version = "0.1.3"
+version = "0.1.4"
 dependencies = [
  "charstreamer-kernels",
  "charstreamer-models-native",
@@ -513,7 +513,7 @@ dependencies = [
 
 [[package]]
 name = "charstreamer-experiments"
-version = "0.1.3"
+version = "0.1.4"
 dependencies = [
  "burn",
  "charstreamer-backend-burn",
@@ -527,7 +527,7 @@ dependencies = [
 
 [[package]]
 name = "charstreamer-kernels"
-version = "0.1.3"
+version = "0.1.4"
 dependencies = [
  "charstreamer-core",
  "criterion",
@@ -538,7 +538,7 @@ dependencies = [
 
 [[package]]
 name = "charstreamer-models-native"
-version = "0.1.3"
+version = "0.1.4"
 dependencies = [
  "charstreamer-core",
  "criterion",
@@ -549,7 +549,7 @@ dependencies = [
 
 [[package]]
 name = "charstreamer-python"
-version = "0.1.3"
+version = "0.1.4"
 dependencies = [
  "charstreamer-segmentation",
  "pyo3",
@@ -558,7 +558,7 @@ dependencies = [
 
 [[package]]
 name = "charstreamer-segmentation"
-version = "0.1.3"
+version = "0.1.4"
 dependencies = [
  "charstreamer-backend-burn",
  "charstreamer-core",

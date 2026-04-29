@@ -1,5 +1,28 @@
 # Changelog
 
+## 0.1.4 - Typed Python API
+
+This release adds a typed Python wrapper surface while preserving explicit
+dictionary conversion for JSON and existing integrations.
+
+Included:
+
+- immutable typed result dataclasses: `Span`, `Annotation`, `ModelInfo`, and
+  `BenchmarkResult`
+- `TypedDict` result shapes for dictionary/JSON output
+- `py.typed` marker for PEP 561 type-checker support
+- `_native.pyi` stubs for the PyO3 extension boundary
+- typed `Segmenter.annotate()`, `spans()`, `model_info()`, and `benchmark()`
+- explicit compatibility methods such as `.to_dict()`,
+  `segmenter.annotate_dict(text)`, and `charstreamer.model_info_dict()`
+
+Known status:
+
+- the default semantic model remains the `paragraph`, `metadata`, `section`,
+  and `list_item` checkpoint from `0.1.2`
+- this release changes high-level Python return types from plain dictionaries
+  to typed mapping-compatible objects
+
 ## 0.1.3 - Cross-Platform Wheel Release
 
 This release republishes the current model-backed CharStreamer package with a

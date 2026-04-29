@@ -14,16 +14,26 @@ import shutil
 import urllib.error
 import urllib.request
 import zipfile
+from collections.abc import Iterable, Mapping
 from dataclasses import dataclass
 from importlib import resources
 from pathlib import Path
 from typing import Any
 
 from . import _native
+from .types import (
+    Annotation,
+    AnnotationDict,
+    BenchmarkResult,
+    BenchmarkResultDict,
+    ModelInfo,
+    ModelInfoDict,
+    Runtime,
+    Span,
+    SpanDict,
+)
 
 SegmenterConfig = _native.SegmenterConfig
-render = _native.render
-render_bytes = _native.render_bytes
 
 __version__ = _native.__version__
 
@@ -46,17 +56,86 @@ class ModelResolution:
     manifest: dict[str, Any] | None
     error: str | None = None
 
-    def to_dict(self) -> dict[str, Any]:
-        model_inference = _model_runtime_available(self)
-        return {
-            "resolved": self.resolved,
-            "source": self.source,
-            "path": self.path,
-            "manifest": self.manifest,
-            "error": self.error,
-            "runtime": _runtime_name(self),
-            "model_inference": model_inference,
-        }
+    def to_model_info(self) -> ModelInfo:
+        return ModelInfo(
+            resolved=self.resolved,
+            source=self.source,
+            path=self.path,
+            manifest=self.manifest,
+            error=self.error,
+            runtime=_runtime_name(self),
+            model_inference=_model_runtime_available(self),
+        )
+
+    def to_dict(self) -> ModelInfoDict:
+        return self.to_model_info().to_dict()
+
+
+def render(text: str, spans: Iterable[Any]) -> str:
+    """Render character-offset spans into tagged text.
+
+    ``spans`` may contain ``Span`` objects, previous-style span dictionaries, or
+    ``(label, start, end[, score])`` tuples using character offsets.
+    """
+
+    return _native.render(
+        text,
+        [_coerce_render_span(span, byte_offsets=False) for span in spans],
+    )
+
+
+def render_bytes(text: str, spans: Iterable[Any]) -> str:
+    """Render byte-offset spans into tagged text.
+
+    ``spans`` may contain ``Span`` objects, previous-style span dictionaries, or
+    ``(label, start_byte, end_byte[, score])`` tuples using UTF-8 byte offsets.
+    """
+
+    return _native.render_bytes(
+        text,
+        [_coerce_render_span(span, byte_offsets=True) for span in spans],
+    )
+
+
+def _coerce_render_span(span: Any, *, byte_offsets: bool) -> tuple[str, int, int, float | None]:
+    if isinstance(span, Span):
+        span_label, span_start, span_end, span_score = (
+            span.as_byte_tuple() if byte_offsets else span.as_char_tuple()
+        )
+        return (span_label, span_start, span_end, span_score)
+
+    if isinstance(span, Mapping):
+        label = str(span["label"])
+        if byte_offsets:
+            start = int(span.get("start_byte", span["start"]))
+            end = int(span.get("end_byte", span["end"]))
+        else:
+            start = int(span["start"])
+            end = int(span["end"])
+        score_value = span.get("score")
+        return (
+            label,
+            start,
+            end,
+            None if score_value is None else float(score_value),
+        )
+
+    values = tuple(span)
+    render_score: Any
+    if len(values) == 3:
+        label, start, end = values
+        render_score = None
+    elif len(values) == 4:
+        label, start, end, render_score = values
+    else:
+        raise ValueError("render spans must be Span objects, dicts, or 3/4-tuples")
+
+    return (
+        str(label),
+        int(start),
+        int(end),
+        None if render_score is None else float(render_score),
+    )
 
 
 class Segmenter:
@@ -93,32 +172,51 @@ class Segmenter:
         model = _resolve_default_model(allow_download=allow_download)
         return cls(config, model=model, require_model=require_model)
 
-    def model_info(self) -> dict[str, Any]:
-        return self._model.to_dict()
+    def model_info(self) -> ModelInfo:
+        return self._model.to_model_info()
 
-    def spans(self, text: str) -> list[dict[str, Any]]:
-        return self._inner.spans(text)
+    def model_info_dict(self) -> ModelInfoDict:
+        return self.model_info().to_dict()
 
-    def annotate(self, text: str) -> dict[str, Any]:
-        annotation = self._inner.annotate(text)
-        annotation["model"] = self.model_info()
-        return annotation
+    def spans(self, text: str) -> tuple[Span, ...]:
+        return tuple(Span.from_dict(span) for span in self._inner.spans(text))
+
+    def spans_dict(self, text: str) -> list[SpanDict]:
+        return [span.to_dict() for span in self.spans(text)]
+
+    def annotate(self, text: str) -> Annotation:
+        return Annotation.from_native(self._inner.annotate(text), self.model_info())
+
+    def annotate_dict(self, text: str) -> AnnotationDict:
+        return self.annotate(text).to_dict()
 
     def tagged(self, text: str) -> str:
         return self._inner.tagged(text)
 
-    def benchmark(self, text: str, iterations: int = 10) -> dict[str, Any]:
-        result = self._inner.benchmark(text, iterations)
-        result["model"] = self.model_info()
-        return result
+    def benchmark(self, text: str, iterations: int = 10) -> BenchmarkResult:
+        return BenchmarkResult.from_native(
+            self._inner.benchmark(text, iterations),
+            self.model_info(),
+        )
+
+    def benchmark_dict(self, text: str, iterations: int = 10) -> BenchmarkResultDict:
+        return self.benchmark(text, iterations).to_dict()
 
 
-def annotate(text: str) -> dict[str, Any]:
+def annotate(text: str) -> Annotation:
     return Segmenter.default().annotate(text)
 
 
-def spans(text: str) -> list[dict[str, Any]]:
+def annotate_dict(text: str) -> AnnotationDict:
+    return Segmenter.default().annotate_dict(text)
+
+
+def spans(text: str) -> tuple[Span, ...]:
     return Segmenter.default().spans(text)
+
+
+def spans_dict(text: str) -> list[SpanDict]:
+    return Segmenter.default().spans_dict(text)
 
 
 def tagged(text: str) -> str:
@@ -129,11 +227,19 @@ def model_info(
     *,
     allow_download: bool | None = None,
     require_model: bool = False,
-) -> dict[str, Any]:
+) -> ModelInfo:
     resolution = _resolve_default_model(allow_download=allow_download)
     if require_model and not _model_runtime_available(resolution):
         raise RuntimeError(_missing_model_runtime_message(resolution))
-    return resolution.to_dict()
+    return resolution.to_model_info()
+
+
+def model_info_dict(
+    *,
+    allow_download: bool | None = None,
+    require_model: bool = False,
+) -> ModelInfoDict:
+    return model_info(allow_download=allow_download, require_model=require_model).to_dict()
 
 
 def _model_runtime_available(resolution: ModelResolution) -> bool:
@@ -147,7 +253,7 @@ def _model_runtime_available(resolution: ModelResolution) -> bool:
     return structure.get("engine") in _SUPPORTED_STRUCTURE_ENGINES
 
 
-def _runtime_name(resolution: ModelResolution) -> str:
+def _runtime_name(resolution: ModelResolution) -> Runtime:
     if _model_runtime_available(resolution):
         if resolution.manifest and resolution.manifest.get("structure"):
             return "burn_combined_segmentation"
@@ -211,7 +317,7 @@ def _should_download(allow_download: bool | None) -> bool:
 
 def _bundled_model_dir() -> Path | None:
     try:
-        model_dir = resources.files(__package__).joinpath("models", "default")
+        model_dir = resources.files(__package__).joinpath("models").joinpath("default")
     except (AttributeError, FileNotFoundError):
         return None
     if model_dir.joinpath("manifest.json").is_file():
@@ -326,13 +432,24 @@ def _sha256(path: Path) -> str:
 
 
 __all__ = [
+    "Annotation",
+    "AnnotationDict",
+    "BenchmarkResult",
+    "BenchmarkResultDict",
+    "ModelInfo",
+    "ModelInfoDict",
     "Segmenter",
     "SegmenterConfig",
+    "Span",
+    "SpanDict",
     "annotate",
+    "annotate_dict",
     "model_info",
+    "model_info_dict",
     "render",
     "render_bytes",
     "spans",
+    "spans_dict",
     "tagged",
     "__version__",
 ]

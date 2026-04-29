@@ -373,7 +373,14 @@ Accept:
 
 ### Python output rules
 
-- spans returned to Python should be documented as byte spans or character spans, never ambiguous
+- high-level Python APIs should return typed objects, not unstructured
+  dictionaries
+- public result types should be immutable dataclasses with explicit
+  `.to_dict()` conversion for JSON and backwards-compatible integrations
+- the package should ship `py.typed` and `_native.pyi` so type checkers can see
+  both the Python wrapper and the PyO3 extension boundary
+- spans returned to Python should be documented as byte spans or character spans,
+  never ambiguous
 - if returning character spans for `str`, document the conversion cost
 - release the GIL during scanning, feature extraction, prediction, and training
 - do not expose an alternate Python-only feature format that diverges from the Rust core

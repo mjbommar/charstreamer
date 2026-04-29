@@ -41,24 +41,24 @@ Notice was timely.
 segmenter = charstreamer.Segmenter.default()
 annotation = segmenter.annotate(text)
 
-print(segmenter.model_info()["runtime"])
-print(annotation["spans"][:5])
-print(annotation["tagged"])
+print(segmenter.model_info().runtime)
+print(annotation.spans[:5])
+print(annotation.tagged)
 ```
 
-Output is a dictionary with scored spans and a rendered tagged string. Exact
-scores and semantic labels depend on the model version. Abridged `v0.1.3`
-output for the text above looks like:
+Output is an immutable typed `Annotation` with scored `Span` objects and a
+rendered tagged string. Exact scores and semantic labels depend on the model
+version. Abridged `v0.1.4` output for the text above looks like:
 
 ```text
 burn_combined_segmentation
-[
-  {"label": "section", "start": 0, "end": 10, "start_byte": 0, "end_byte": 10, "score": ...},
-  {"label": "paragraph", "start": 11, "end": 65, "start_byte": 11, "end_byte": 65, "score": ...},
-  {"label": "sentence", "start": 11, "end": 42, "start_byte": 11, "end_byte": 42, "score": ...},
-  {"label": "sentence", "start": 43, "end": 65, "start_byte": 43, "end_byte": 65, "score": ...},
-  {"label": "metadata", "start": 67, "end": 85, "start_byte": 67, "end_byte": 85, "score": ...}
-]
+(
+  Span(label='section', start=0, end=10, start_byte=0, end_byte=10, score=...),
+  Span(label='paragraph', start=11, end=65, start_byte=11, end_byte=65, score=...),
+  Span(label='sentence', start=11, end=42, start_byte=11, end_byte=42, score=...),
+  Span(label='sentence', start=43, end=65, start_byte=43, end_byte=65, score=...),
+  Span(label='metadata', start=67, end=85, start_byte=67, end_byte=85, score=...)
+)
 <|section|>Background</|section|>
 <|paragraph|><|sentence|>The court reviewed the invoice.</|sentence|> <|sentence|>The shipment was late.</|sentence|></|paragraph|>
 
@@ -72,6 +72,14 @@ import charstreamer
 
 print(charstreamer.spans("The court reviewed the invoice. Notice was timely."))
 print(charstreamer.tagged("The court reviewed the invoice. Notice was timely."))
+```
+
+For JSON or legacy dictionary integrations, use `.to_dict()` or the explicit
+dictionary methods:
+
+```python
+payload = annotation.to_dict()
+payload = segmenter.annotate_dict(text)
 ```
 
 ## Model Loading
@@ -101,7 +109,7 @@ Useful environment variables:
 
 ## Current Release
 
-`v0.1.3` is the current model-backed release. It vendors a Burn
+`v0.1.4` is the current model-backed release. It vendors a Burn
 sentence-boundary model and a Burn semantic-structure model.
 
 Current default bundle metrics:
@@ -119,6 +127,26 @@ Notes:
 - `v0.1.1` contained the first model-backed wheel, but its PyPI long description
   predated the combined semantic model.
 - `dialogue` is reserved until a balanced dialogue training set exists.
+
+## Performance
+
+On the current Linux x86_64 release-wheel benchmark, the combined
+sentence+semantic segmenter runs at roughly `34-35 MiB/s` end-to-end on a long
+UTF-8 document. This includes model inference, span decoding, and tagged
+rendering for the default Burn model bundle.
+
+Measure your own input and machine with the typed benchmark API:
+
+```python
+import charstreamer
+
+segmenter = charstreamer.Segmenter.default()
+result = segmenter.benchmark(text, iterations=10)
+
+print(result.mib_per_second)
+print(result.chars_per_second)
+print(result.to_dict())
+```
 
 ## Platform Builds
 
@@ -174,7 +202,7 @@ Build a local wheel from the checked-in vendored model:
 ```bash
 python3 tools/model-artifacts/vendor_model.py \
   --require-burn \
-  --archive-out dist-models/charstreamer-default-0.1.3.zip \
+  --archive-out dist-models/charstreamer-default-0.1.4.zip \
   crates/charstreamer-python/python/charstreamer/models/default
 
 uvx --with 'maturin[patchelf]' maturin build \
@@ -217,7 +245,7 @@ Run the manual GitHub Actions release workflow:
 
 ```bash
 gh workflow run Release \
-  -f tag=v0.1.3
+  -f tag=v0.1.4
 ```
 
 By default, the workflow creates the normalized
@@ -227,8 +255,8 @@ bundle:
 
 ```bash
 gh workflow run Release \
-  -f tag=v0.1.3 \
-  -f model_artifact_url=https://.../charstreamer-default-0.1.3.zip
+  -f tag=v0.1.4 \
+  -f model_artifact_url=https://.../charstreamer-default-0.1.4.zip
 ```
 
 The workflow fails if any wheel lacks a supported Burn model bundle or if the

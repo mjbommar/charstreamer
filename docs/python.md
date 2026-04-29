@@ -397,9 +397,9 @@ uv run --with target/wheels/charstreamer-0.1.0-cp314-cp314-manylinux_2_34_x86_64
 import charstreamer
 
 text = 'Case: X\nDocket: 1\n\n# Facts\nOne. Two.\n\n- Item one.\n\n"Hello."'
-result = charstreamer.annotate(text)
+annotation = charstreamer.annotate(text)
 print(charstreamer.__version__)
-print(result["tagged"])
+print(annotation.tagged)
 print(charstreamer.Segmenter.default().benchmark(text * 1000, iterations=3))
 PY
 ```
@@ -408,17 +408,21 @@ Exposed API:
 
 - `charstreamer.SegmenterConfig`
 - `charstreamer.Segmenter`
-- `charstreamer.annotate(text) -> {"tagged": str, "spans": list[dict]}`
-- `charstreamer.spans(text) -> list[dict]`
+- `charstreamer.annotate(text) -> Annotation`
+- `charstreamer.annotate_dict(text) -> AnnotationDict`
+- `charstreamer.spans(text) -> tuple[Span, ...]`
+- `charstreamer.spans_dict(text) -> list[SpanDict]`
 - `charstreamer.tagged(text) -> str`
 - `charstreamer.render(text, spans) -> str`
 - `charstreamer.render_bytes(text, spans) -> str`
-- `Segmenter.benchmark(text, iterations=10) -> dict`
+- `Segmenter.benchmark(text, iterations=10) -> BenchmarkResult`
+- `Segmenter.benchmark_dict(text, iterations=10) -> BenchmarkResultDict`
 
 Python offset contract:
 
-- `span["start"]` and `span["end"]` are Python character offsets, suitable for `text[start:end]`
-- `span["start_byte"]` and `span["end_byte"]` preserve the canonical Rust UTF-8 byte offsets
+- `span.start` and `span.end` are Python character offsets, suitable for `text[start:end]`
+- `span.start_byte` and `span.end_byte` preserve the canonical Rust UTF-8 byte offsets
+- typed result objects support `.to_dict()` for JSON and explicit dictionary output
 - `charstreamer.render(text, spans)` accepts Python character offsets
 - `charstreamer.render_bytes(text, spans)` accepts canonical Rust byte offsets
 - benchmark dictionaries include both byte and character throughput fields
