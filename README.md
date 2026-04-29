@@ -40,6 +40,15 @@ release goals for this checkpoint are:
   decisions
 - keep the active external Rust model dependency path focused on Burn
 
+Important model status:
+
+- `v0.1.0` on PyPI does **not** contain a trained Burn model.
+- Current source includes model-artifact validation and Python model-resolution
+  plumbing, but production Burn model inference still has to be connected before
+  the next model-backed public release.
+- Until that work is complete, `charstreamer.Segmenter.default()` reports its
+  model status and uses the native heuristic segmenter as the fallback runtime.
+
 ## Build And Test
 
 Prerequisites:
@@ -78,20 +87,42 @@ uvx maturin build --release --manifest-path crates/charstreamer-python/Cargo.tom
 uvx twine check dist/*
 ```
 
+Validate that a wheel contains a usable vendored model:
+
+```bash
+python3 tools/model-artifacts/check_wheel_model.py --require-burn dist/charstreamer-*.whl
+```
+
 ## Release
 
 The public distribution target is one PyPI package: `charstreamer`.
 
-GitHub Actions handles normal releases from tags:
+GitHub Actions handles releases through the manual `Release` workflow. A
+model-backed release must provide `model_artifact_url` pointing at a validated
+`charstreamer-default-<version>.zip` bundle before the wheel is built.
+
+The model bundle is validated and copied into:
+
+```text
+charstreamer/models/default/
+```
+
+inside the wheel. The release also attaches the normalized model zip to the
+GitHub release. The release workflow fails if the wheel does not contain a
+Burn-backed model bundle or if the Python default path cannot load a usable
+model offline.
+
+Run a release with the GitHub CLI:
 
 ```bash
-git tag v0.1.0
-git push origin v0.1.0
+gh workflow run Release \
+  -f tag=v0.1.1 \
+  -f model_artifact_url=https://example.com/charstreamer-default-0.1.1.zip
 ```
 
 The release workflow builds a single `cp39-abi3` manylinux wheel, checks the
-wheel metadata, smoke-tests an isolated install, publishes to PyPI, and attaches
-the wheel to a GitHub release.
+wheel metadata, validates the model artifact, smoke-tests an isolated install,
+publishes to PyPI, and attaches the wheel and model zip to a GitHub release.
 
 PyPI publishing uses GitHub Actions secrets `PYPI_USERNAME` and
 `PYPI_API_TOKEN`, which can be populated from a local `.pypirc`. The workflow
@@ -99,6 +130,72 @@ also uses the GitHub environment named `pypi`, so it can be switched to PyPI
 Trusted Publishing later without changing the release trigger.
 
 ## Quick Examples
+
+Install from PyPI:
+
+```bash
+pip install charstreamer
+```
+
+Use from Python:
+
+```python
+import charstreamer
+
+text = """# Background
+The court reviewed the invoice. The shipment was late.
+
+- Notice was timely.
+"""
+
+segmenter = charstreamer.Segmenter.default()
+print(segmenter.model_info())
+annotation = segmenter.annotate(text)
+print(annotation["spans"][:3])
+print(annotation["tagged"])
+```
+
+Offline fallback output without a vendored model
+(`CHARSTREAMER_AUTO_DOWNLOAD=0`) looks like:
+
+```python
+{
+    "resolved": False,
+    "source": "heuristic",
+    "path": None,
+    "manifest": None,
+    "error": None,
+    "runtime": "native_heuristic",
+    "model_inference": False,
+}
+```
+
+Example spans and tagged text:
+
+```python
+[
+    {"label": "section", "start": 0, "end": 12, "start_byte": 0, "end_byte": 12, "score": 0.98},
+    {"label": "paragraph", "start": 0, "end": 67, "start_byte": 0, "end_byte": 67, "score": 1.0},
+    {"label": "sentence", "start": 13, "end": 44, "start_byte": 13, "end_byte": 44, "score": 1.0},
+]
+
+<|paragraph|><|section|># Background</|section|>
+<|sentence|>The court reviewed the invoice.</|sentence|>
+<|sentence|>The shipment was late.</|sentence|></|paragraph|>
+<|paragraph|><|list_item|>- Notice was timely.</|list_item|></|paragraph|>
+```
+
+Force model-backed execution in tests or production startup:
+
+```python
+import charstreamer
+
+charstreamer.model_info(allow_download=False, require_model=True)
+segmenter = charstreamer.Segmenter.default(require_model=True)
+```
+
+That call must fail if the wheel is heuristic-only. This is intentional: it
+prevents silently shipping a package that looks model-backed but is not.
 
 Run the narrow boundary pipeline example:
 
@@ -134,6 +231,7 @@ Start with:
 - [docs/reference/architecture.md](docs/reference/architecture.md)
 - [docs/reference/primitives.md](docs/reference/primitives.md)
 - [docs/reference/model-families.md](docs/reference/model-families.md)
+- [docs/reference/model-artifacts.md](docs/reference/model-artifacts.md)
 - [docs/quality/release-gates.md](docs/quality/release-gates.md)
 - [docs/results.md](docs/results.md)
 

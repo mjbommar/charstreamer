@@ -39,6 +39,8 @@ Must pass:
 - no known crashers on supported platforms
 - deterministic fixed-seed training for native models
 - error messages for malformed inputs are tested
+- model artifacts validate before packaging
+- the default Python path reports whether it is model-backed or heuristic
 
 ### G4: Performance gate
 
@@ -83,6 +85,20 @@ Must pass:
 
 - native pipeline passes corpus suite
 - native models serialize and reload cleanly
+- default model bundle is present in the wheel or attached to the release
+- `charstreamer.model_info(allow_download=False, require_model=True)` succeeds
 - benchmark report is current
 - build diary includes release hardening summary
 - decision log includes any deviations from original architecture
+
+## Model-backed release checklist
+
+- Training writes a Burn model record plus thresholds, label schema, feature
+  configuration, and validation metrics.
+- `tools/model-artifacts/vendor_model.py --require-burn` validates the bundle
+  and vendors it into the Python package before wheel build.
+- `tools/model-artifacts/check_wheel_model.py --require-burn dist/*.whl`
+  passes on the built wheel.
+- The wheel smoke test runs the hello-world example with
+  `CHARSTREAMER_AUTO_DOWNLOAD=0` so bundled model loading is proven offline.
+- The release workflow attaches both the wheel and normalized model zip.

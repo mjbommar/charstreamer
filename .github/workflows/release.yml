@@ -1,12 +1,14 @@
 name: Release
 
 on:
-  push:
-    tags: ["v*"]
   workflow_dispatch:
     inputs:
       tag:
         description: "Release tag, for example v0.1.0"
+        required: true
+        type: string
+      model_artifact_url:
+        description: "URL to a validated charstreamer-default model .zip"
         required: true
         type: string
 
@@ -23,18 +25,12 @@ jobs:
       url: https://pypi.org/p/charstreamer
     steps:
       - uses: actions/checkout@v6
-        with:
-          ref: ${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref }}
 
       - name: Validate release tag
         id: release
         shell: bash
         run: |
-          if [[ "${GITHUB_EVENT_NAME}" == "workflow_dispatch" ]]; then
-            tag="${{ inputs.tag }}"
-          else
-            tag="${GITHUB_REF_NAME}"
-          fi
+          tag="${{ inputs.tag }}"
           version="${tag#v}"
           package_version="$(python3 - <<'PY'
           import tomllib
@@ -47,6 +43,7 @@ jobs:
             exit 1
           fi
           echo "tag=$tag" >> "$GITHUB_OUTPUT"
+          echo "version=$version" >> "$GITHUB_OUTPUT"
 
       - name: Install system dependencies
         run: sudo apt-get update && sudo apt-get install -y libopenblas-dev pkg-config
@@ -57,21 +54,39 @@ jobs:
       - name: Install uv
         uses: astral-sh/setup-uv@v8.1.0
 
+      - name: Vendor model artifact
+        env:
+          MODEL_ARTIFACT_URL: ${{ inputs.model_artifact_url }}
+        run: |
+          mkdir -p dist/models
+          curl -fsSL "$MODEL_ARTIFACT_URL" -o "dist/models/charstreamer-default-${{ steps.release.outputs.version }}.zip"
+          python3 tools/model-artifacts/vendor_model.py \
+            --require-burn \
+            --archive-out "dist/models/charstreamer-default-${{ steps.release.outputs.version }}.zip" \
+            "dist/models/charstreamer-default-${{ steps.release.outputs.version }}.zip"
+
       - name: Build wheel
         run: uvx maturin build --release --manifest-path crates/charstreamer-python/Cargo.toml --out dist
 
       - name: Check wheel metadata
         run: uvx twine check dist/*
 
+      - name: Check wheel contains usable model
+        run: python3 tools/model-artifacts/check_wheel_model.py --require-burn dist/*.whl
+
       - name: Smoke-test wheel
+        env:
+          CHARSTREAMER_AUTO_DOWNLOAD: "0"
         run: |
           uv run --isolated --with ./dist/charstreamer-*.whl python - <<'PY'
           import charstreamer
 
+          info = charstreamer.model_info(allow_download=False, require_model=True)
           text = "# Background\nThe court reviewed the invoice. The shipment was late.\n\n- Notice was timely.\n"
           annotation = charstreamer.Segmenter.default().annotate(text)
           assert annotation["spans"]
           assert annotation["tagged"].startswith("<|")
+          print(info)
           print(len(annotation["spans"]))
           PY
 
@@ -88,6 +103,11 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           RELEASE_TAG: ${{ steps.release.outputs.tag }}
         run: |
-          gh release create "$RELEASE_TAG" dist/*.whl \
+          assets=(dist/*.whl)
+          if compgen -G "dist/models/*.zip" > /dev/null; then
+            assets+=(dist/models/*.zip)
+          fi
+          gh release create "$RELEASE_TAG" "${assets[@]}" \
+            --target "$GITHUB_SHA" \
             --title "CharStreamer ${RELEASE_TAG}" \
             --notes-file CHANGELOG.md

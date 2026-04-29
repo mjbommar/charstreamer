@@ -329,3 +329,11 @@ Next step:
 - deleted checked-in Candle experiment manifests so new runs cannot select the
   dropped backend accidentally
 - kept Burn as the neural backend to validate going forward
+- split the Python package into a thin wrapper plus `_native` PyO3 module so
+  model artifact resolution can happen before the Rust hot path is called
+- added default model bundle validation and vendoring tools under
+  `tools/model-artifacts/`
+- added release gates that reject model-backed wheels without a validated Burn
+  model bundle and offline `require_model=True` startup
+- documented the model artifact manifest, runtime resolution order, and
+  remaining model-backed release tasks

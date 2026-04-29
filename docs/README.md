@@ -26,12 +26,14 @@ Read these in order if you are new to the project:
 4. [reference/model-families.md](reference/model-families.md)
 5. [reference/semantic-segmentation.md](reference/semantic-segmentation.md)
 6. [reference/api-surface.md](reference/api-surface.md)
-7. [rust.md](rust.md)
-8. [python.md](python.md)
-9. [plan/roadmap.md](plan/roadmap.md)
-10. [quality/test-strategy.md](quality/test-strategy.md)
-11. [quality/performance-targets.md](quality/performance-targets.md)
-12. [results.md](results.md)
+7. [reference/model-artifacts.md](reference/model-artifacts.md)
+8. [rust.md](rust.md)
+9. [python.md](python.md)
+10. [plan/roadmap.md](plan/roadmap.md)
+11. [plan/model-backed-release-todo.md](plan/model-backed-release-todo.md)
+12. [quality/test-strategy.md](quality/test-strategy.md)
+13. [quality/performance-targets.md](quality/performance-targets.md)
+14. [results.md](results.md)
 
 ## Directory map
 
@@ -48,11 +50,13 @@ docs/
     semantic-segmentation.md
     api-surface.md
     build-and-packaging.md
+    model-artifacts.md
   plan/
     roadmap.md
     work-breakdown.md
     vertical-slice-todo.md
     generic-scoring-todo.md
+    model-backed-release-todo.md
     phases/
       phase-00-foundation.md
       phase-01-core-pipeline.md

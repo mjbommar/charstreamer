@@ -125,12 +125,21 @@ Ship:
 
 - Rust crates through crates.io eventually
 - Python wheels through PyPI eventually
-- native model artifacts as regular files
+- native model artifacts as validated bundle directories or zip archives
+
+For the Python package, the default model should be either:
+
+- vendored into the wheel under `charstreamer/models/default/`
+- attached to the same GitHub release as `charstreamer-default-<version>.zip`
+  and resolved by the Python loader into the local model cache
 
 Do not require:
 
 - ONNX runtime for default first-party models
 - Python for Rust-only inference
+
+See [model-artifacts.md](model-artifacts.md) for the manifest format, vendoring
+script, runtime resolution order, and release gates.
 
 ## CI expectations
 

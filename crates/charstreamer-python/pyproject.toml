@@ -23,10 +23,11 @@ classifiers = [
 [project.urls]
 Homepage = "https://github.com/mjbommar/charstreamer"
 Repository = "https://github.com/mjbommar/charstreamer"
-Documentation = "https://github.com/mjbommar/charstreamer/tree/master/docs"
+Documentation = "https://github.com/mjbommar/charstreamer/tree/main/docs"
 Issues = "https://github.com/mjbommar/charstreamer/issues"
 
 [tool.maturin]
 bindings = "pyo3"
 manifest-path = "Cargo.toml"
-module-name = "charstreamer"
+python-source = "python"
+module-name = "charstreamer._native"

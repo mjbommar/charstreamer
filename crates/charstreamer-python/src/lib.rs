@@ -360,7 +360,7 @@ fn build_char_to_byte_map(text: &str, offsets: HashSet<usize>) -> PyResult<HashM
 }
 
 #[pymodule]
-fn charstreamer(module: &Bound<'_, PyModule>) -> PyResult<()> {
+fn _native(module: &Bound<'_, PyModule>) -> PyResult<()> {
     module.add_class::<PySegmenterConfig>()?;
     module.add_class::<PySegmenter>()?;
     module.add_function(wrap_pyfunction!(annotate, module)?)?;

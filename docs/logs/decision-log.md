@@ -1,5 +1,35 @@
 # Decision Log
 
+## 2026-04-29: Model-backed releases require executable model artifacts
+
+Context:
+
+- the first PyPI wheel proved packaging but did not vendor a trained Burn model
+- a heuristic-only default path is useful for smoke tests but is misleading as a
+  model-backed public release
+
+Decision:
+
+- model-backed releases must provide a validated `charstreamer-default` model
+  bundle before wheel build
+- the Python default path must report model resolution and support
+  `require_model=True` for fail-fast startup checks
+- the release workflow must reject wheels without a validated Burn bundle and a
+  usable offline model-backed runtime
+
+Consequences:
+
+- source and CI builds can still run the heuristic fallback
+- public model releases are blocked until Burn serialization and production
+  inference are wired into the runtime
+- the model bundle can be inspected as a GitHub release artifact as well as
+  vendored into the wheel
+
+Related docs:
+
+- [../reference/model-artifacts.md](../reference/model-artifacts.md)
+- [../plan/model-backed-release-todo.md](../plan/model-backed-release-todo.md)
+
 ## 2026-04-29: Burn-only external Rust model backend
 
 Context:

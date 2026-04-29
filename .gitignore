@@ -13,10 +13,13 @@
 /data/bench/*.txt
 /data/generated/
 /data/synthetic/
+/crates/charstreamer-python/python/charstreamer/models/default/*
+!/crates/charstreamer-python/python/charstreamer/models/default/.gitkeep
 /logs/
 *.joblib
 *.onnx
 *.safetensors
+*.mpk
 
 # Build artifacts
 *.so
