@@ -812,7 +812,7 @@ Default bundle:
 
 - directory: `target/model/charstreamer-default-0.1.1-release`
 - vendored wheel path: `crates/charstreamer-python/python/charstreamer/models/default`
-- archive: `dist-models/charstreamer-default-0.1.1.zip`
+- archive: `dist-models/charstreamer-default-0.1.2.zip`
 - runtime: `burn_combined_segmentation`
 - structure labels: `paragraph`, `metadata`, `section`, `list_item`
 - sentence boundary model remains a separate Burn shallow MLP

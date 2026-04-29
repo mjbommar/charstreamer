@@ -43,9 +43,11 @@ release goals for this checkpoint are:
 Important model status:
 
 - `v0.1.0` on PyPI does **not** contain a trained Burn model.
-- `v0.1.1` is the first planned model-backed release. The wheel vendors a
-  default Burn shallow-MLP sentence-boundary bundle and loads it automatically
-  from `charstreamer.Segmenter.default()`.
+- `v0.1.1` contains the first model-backed wheel, but its PyPI long description
+  predates the combined semantic model.
+- `v0.1.2` is the current model-backed release. The wheel vendors a Burn
+  sentence-boundary model and a Burn semantic structure model for `paragraph`,
+  `metadata`, `section`, and `list_item`.
 - The default runtime must load a supported model bundle. It must not synthesize
   semantic annotations from hard-coded rules when a model is unavailable.
 
@@ -84,7 +86,7 @@ Build the release wheel locally:
 ```bash
 python3 tools/model-artifacts/vendor_model.py \
   --require-burn \
-  --archive-out dist-models/charstreamer-default-0.1.1.zip \
+  --archive-out dist-models/charstreamer-default-0.1.2.zip \
   target/model/charstreamer-default-0.1.1-release
 
 uvx --with 'maturin[patchelf]' maturin build \
@@ -123,17 +125,17 @@ model offline.
 The usual sequence is:
 
 ```bash
-gh release create v0.1.1 \
-  dist-models/charstreamer-default-0.1.1.zip \
+gh release create v0.1.2 \
+  dist-models/charstreamer-default-0.1.2.zip \
   --target main \
-  --title "CharStreamer v0.1.1" \
+  --title "CharStreamer v0.1.2" \
   --notes-file CHANGELOG.md
 
 gh workflow run Release \
-  -f tag=v0.1.1
+  -f tag=v0.1.2
 ```
 
-Alternatively, pass `-f model_artifact_url=https://.../charstreamer-default-0.1.1.zip`
+Alternatively, pass `-f model_artifact_url=https://.../charstreamer-default-0.1.2.zip`
 to the workflow and it will download that bundle directly.
 
 The release workflow builds a single `cp39-abi3` manylinux wheel, checks the
@@ -148,9 +150,10 @@ Trusted Publishing later without changing the release trigger.
 Current default bundle metrics:
 
 ```text
-engine: burn_shallow_mlp_sentence_v1
-features: encoded_left=15 encoded_right=15 count_radius=64 feature_dim=97 hidden_dim=128
-validation: precision=0.981 recall=0.973 f1=0.977 threshold=0.59
+runtime: burn_combined_segmentation
+sentence validation f1: 0.977
+semantic fixed-validation macro f1: 0.746
+semantic labels: paragraph, metadata, section, list_item
 ```
 
 ## Quick Examples
@@ -175,16 +178,16 @@ print(annotation["spans"][:3])
 print(annotation["tagged"])
 ```
 
-Model-backed output with the `v0.1.1` wheel looks like:
+Model-backed output with the current wheel looks like:
 
 ```python
 {
     "resolved": True,
     "source": "bundled",
     "path": ".../site-packages/charstreamer/models/default",
-    "manifest": {"engine": "burn_shallow_mlp_sentence_v1", "...": "..."},
+    "manifest": {"engine": "burn_shallow_mlp_sentence_v1", "structure": {"engine": "burn_multilabel_mlp_structure_v1", "...": "..."}, "...": "..."},
     "error": None,
-    "runtime": "burn_sentence_boundary",
+    "runtime": "burn_combined_segmentation",
     "model_inference": True,
 }
 ```
@@ -213,10 +216,8 @@ segmenter = charstreamer.Segmenter.default(require_model=True)
 That call must fail if no supported model is available. This is intentional: it
 prevents silently shipping a package that looks model-backed but is not.
 
-The current default model is a sentence-end model. It does not yet include a
-trained sentence-start/outside classifier, so arbitrary document furniture such
-as headings should be handled by a future span/IOB model rather than by
-hard-coded cleanup rules.
+The current default model is an early combined sentence and structure model.
+`dialogue` is intentionally excluded until a balanced dialogue dataset exists.
 
 Run the narrow boundary pipeline example:
 

@@ -1,5 +1,26 @@
 # Changelog
 
+## 0.1.2 - Combined Semantic Model Wheel
+
+This release corrects the Python package metadata and makes the combined
+model-backed segmentation bundle the latest public wheel.
+
+Included:
+
+- vendored Burn sentence-boundary model
+- vendored Burn semantic structure model for `paragraph`, `metadata`,
+  `section`, and `list_item`
+- reusable line byte n-gram and line-context feature primitives
+- offline default model loading from the Python wheel
+- GitHub release model archive matching the wheel version
+
+Known status:
+
+- `dialogue` is intentionally not emitted until a balanced dialogue dataset is
+  available
+- the model is an early semantic segmentation checkpoint and should be validated
+  on task-specific corpora before production use
+
 ## 0.1.1 - Model-Backed Wheel
 
 This release is the first CharStreamer checkpoint with a vendored, loadable
