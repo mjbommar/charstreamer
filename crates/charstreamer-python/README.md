@@ -38,6 +38,21 @@ The public Python wrapper returns typed immutable dataclasses:
 legacy integrations, call `.to_dict()` or use methods such as
 `segmenter.annotate_dict(text)`.
 
+## Performance
+
+On the current Linux x86_64 release-wheel benchmark, the combined
+sentence+semantic segmenter runs at roughly `34-35 MiB/s` end-to-end on a long
+UTF-8 document. This includes model inference, span decoding, and tagged
+rendering for the default Burn model bundle.
+
+Measure local throughput with:
+
+```python
+result = segmenter.benchmark(text, iterations=10)
+print(result.mib_per_second)
+print(result.chars_per_second)
+```
+
 If a default model is vendored into the wheel, `Segmenter.default()` loads it
 from package data. If not, it checks the local cache and then the GitHub release
 model URL unless `CHARSTREAMER_AUTO_DOWNLOAD=0` is set. To assert model
