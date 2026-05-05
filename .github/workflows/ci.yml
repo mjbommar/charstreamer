@@ -54,6 +54,14 @@ jobs:
         working-directory: tools/span-generator
         run: uv run pytest
 
+      - name: Test abbrev augment
+        working-directory: tools/abbrev-augment
+        run: uv run pytest
+
+      - name: Test abbrev eval (helpers)
+        working-directory: tools/abbrev-eval
+        run: uv run pytest
+
   wheel:
     name: Wheel ${{ matrix.id }}
     runs-on: ${{ matrix.os }}

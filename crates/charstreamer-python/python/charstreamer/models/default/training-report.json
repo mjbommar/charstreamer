@@ -5,12 +5,13 @@
       "count_radius": 64,
       "encoded_left": 15,
       "encoded_right": 15,
-      "feature_dim": 97,
-      "hidden_dim": 128
+      "feature_dim": 109,
+      "hidden_dim": 128,
+      "token_shape_features": true
     },
     "files": [
       {
-        "bytes": 51153,
+        "bytes": 57297,
         "path": "sentence_boundary.mpk",
         "role": "sentence_boundary"
       }
@@ -18,58 +19,59 @@
     "format": "charstreamer.model-bundle.v1",
     "metrics": {
       "train": {
-        "accuracy": 0.988499104976654,
-        "f1": 0.9821361899375916,
-        "false_negatives": 2312,
-        "false_positives": 2236,
-        "precision": 0.9824295043945312,
-        "recall": 0.9818431735038757,
-        "true_negatives": 265877,
-        "true_positives": 125023
+        "accuracy": 0.9928779006004333,
+        "f1": 0.9911505579948425,
+        "false_negatives": 580,
+        "false_positives": 319,
+        "precision": 0.9937036037445068,
+        "recall": 0.9886106848716736,
+        "true_negatives": 74983,
+        "true_positives": 50345
       },
       "validation": {
-        "accuracy": 0.9853371381759644,
-        "f1": 0.9772680401802063,
-        "false_negatives": 847,
-        "false_positives": 592,
-        "precision": 0.9812206625938416,
-        "recall": 0.9733471870422363,
-        "true_negatives": 65768,
-        "true_positives": 30932
+        "accuracy": 0.9900451302528381,
+        "f1": 0.9878301620483398,
+        "false_negatives": 195,
+        "false_positives": 116,
+        "precision": 0.9908933639526367,
+        "recall": 0.9847858548164368,
+        "true_negatives": 18308,
+        "true_positives": 12622
       }
     },
     "name": "charstreamer-default",
     "task": "sentence_boundary",
     "thresholds": {
-      "sentence.end": 0.5899999737739563
+      "sentence.end": 0.8100000023841858
     },
     "training": {
       "fit_report": {
         "batch_size": 2048,
-        "cols": 97,
+        "cols": 109,
         "epochs": 24,
         "hidden_dim": 128,
         "learning_rate": 0.0008,
-        "rows": 395448,
-        "seed": 29
+        "rows": 126227,
+        "seed": 17
       },
       "stats": {
-        "candidate_count": 493587,
+        "candidate_count": 157468,
         "negative_keep_rate": 0.019999999552965164,
-        "positive_candidate_count": 159114,
-        "records_seen": 50284,
-        "records_used": 50284,
+        "positive_candidate_count": 63742,
+        "records_seen": 35000,
+        "records_used": 35000,
         "records_without_candidates": 0,
-        "train_negative_rows": 268113,
-        "train_positive_rows": 127335,
-        "train_rows": 395448,
+        "terminal_keep_rate": 0.10000000149011612,
+        "train_negative_rows": 75302,
+        "train_positive_rows": 50925,
+        "train_rows": 126227,
         "unmatched_positive_boundaries": 0,
-        "validation_negative_rows": 66360,
-        "validation_positive_rows": 31779,
-        "validation_rows": 98139
+        "validation_negative_rows": 18424,
+        "validation_positive_rows": 12817,
+        "validation_rows": 31241
       }
     },
-    "version": "0.1.1"
+    "version": "0.1.5"
   },
-  "model_dir": "target/model/charstreamer-default-0.1.1-release"
+  "model_dir": "/home/mjbommar/projects/personal/charstreamer/dist-models/release-candidates/seed_17"
 }

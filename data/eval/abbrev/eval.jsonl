@@ -1,0 +1,94 @@
+{"id":"title-dr-1","text":"Dr. Smith met with the patient. He was concerned.","gold_marker":"the patient."}
+{"id":"title-dr-2","text":"Dr. Patel reviewed the chart. The diagnosis was clear.","gold_marker":"the chart."}
+{"id":"title-mr-1","text":"Mr. Jones arrived at 5 p.m. yesterday.","gold_marker":null}
+{"id":"title-mr-2","text":"Mr. Henderson signed the lease.","gold_marker":null}
+{"id":"title-mrs-1","text":"Mrs. Brown was the last witness.","gold_marker":null}
+{"id":"title-mrs-2","text":"Mrs. Allen taught the class for years. Her students adored her.","gold_marker":"the class for years."}
+{"id":"title-ms-1","text":"Ms. Nguyen filed the brief on Monday.","gold_marker":null}
+{"id":"title-prof-1","text":"Prof. Williams gave a lecture. Students asked questions.","gold_marker":"gave a lecture."}
+{"id":"title-prof-2","text":"Prof. Liu studies climate models.","gold_marker":null}
+{"id":"title-rev-1","text":"Rev. Carter delivered the eulogy.","gold_marker":null}
+{"id":"title-multi-1","text":"Dr. Smith and Mr. Jones met with Mrs. Brown at 9 a.m. on Tuesday. They discussed the case.","gold_marker":"on Tuesday."}
+{"id":"title-multi-2","text":"Mr. and Mrs. Smith arrived. They were greeted warmly.","gold_marker":"Mrs. Smith arrived."}
+{"id":"title-multi-3","text":"Dr. Lopez and Dr. Khan disagreed. They argued for hours.","gold_marker":"disagreed."}
+{"id":"corp-inc-1","text":"Acme Inc. announced earnings. Shares rose sharply.","gold_marker":"announced earnings."}
+{"id":"corp-inc-2","text":"He works at Acme Inc. as a manager.","gold_marker":null}
+{"id":"corp-ltd-1","text":"Globex Ltd. signed the deal yesterday.","gold_marker":null}
+{"id":"corp-ltd-2","text":"Globex Ltd. expanded operations. The CEO praised the team.","gold_marker":"expanded operations."}
+{"id":"corp-co-1","text":"Smith and Co. is a small firm.","gold_marker":null}
+{"id":"corp-corp-1","text":"Initech Corp. filed for bankruptcy. The market reacted.","gold_marker":"filed for bankruptcy."}
+{"id":"st-place-1","text":"She lived at 123 Main St. with her dog.","gold_marker":null}
+{"id":"st-place-2","text":"He works on Elm St. downtown.","gold_marker":null}
+{"id":"st-louis-1","text":"He flew to St. Louis. She drove to Chicago.","gold_marker":"St. Louis."}
+{"id":"st-louis-2","text":"They met in St. Paul last summer.","gold_marker":null}
+{"id":"st-multi","text":"From St. Louis to St. Paul takes hours.","gold_marker":null}
+{"id":"ave-blvd","text":"The shop on 5th Ave. closed today.","gold_marker":null}
+{"id":"us-1","text":"The U.S. economy is strong.","gold_marker":null}
+{"id":"us-2","text":"He moved to the U.S. from Canada.","gold_marker":null}
+{"id":"us-3","text":"The U.S. and U.K. signed a treaty. Both governments approved it.","gold_marker":"signed a treaty."}
+{"id":"us-end","text":"He moved to the U.S.","gold_marker":null}
+{"id":"acronym-uk","text":"The U.K. ambassador arrived.","gold_marker":null}
+{"id":"acronym-eu","text":"The E.U. issued new rules.","gold_marker":null}
+{"id":"phd-1","text":"He earned a Ph.D. in physics. She earned an M.D.","gold_marker":"in physics."}
+{"id":"phd-2","text":"Her Ph.D. is from MIT.","gold_marker":null}
+{"id":"degree-md","text":"The new doctor has an M.D. and a Ph.D.","gold_marker":null}
+{"id":"degree-end","text":"He just completed his M.S.","gold_marker":null}
+{"id":"vs-citation","text":"In Smith v. Jones the court applied a strict rule. The dissent disagreed.","gold_marker":"a strict rule."}
+{"id":"vs-2","text":"This is Brown v. Board territory.","gold_marker":null}
+{"id":"cf-citation-1","text":"Cf. Smith v. Jones, 123 U.S. 456 (2020). The court ruled.","gold_marker":"123 U.S. 456 (2020)."}
+{"id":"cf-citation-2","text":"Cf. Roe v. Wade for analogous reasoning.","gold_marker":null}
+{"id":"see-citation","text":"See, e.g., the discussion in Smith. The point is well-taken.","gold_marker":"the discussion in Smith."}
+{"id":"id-citation","text":"See id. at 45. The same rule applies.","gold_marker":"See id. at 45."}
+{"id":"etc-then","text":"Apples, oranges, etc. Then he left.","gold_marker":"oranges, etc."}
+{"id":"etc-and","text":"Apples, oranges, etc. and so on.","gold_marker":null}
+{"id":"etc-end","text":"He bought apples, oranges, pears, etc.","gold_marker":null}
+{"id":"eg-mid","text":"Many fruits, e.g. apples and pears, are sweet.","gold_marker":null}
+{"id":"ie-mid","text":"The standard model, i.e. the one in section 3, applies here.","gold_marker":null}
+{"id":"decimal-1","text":"Section 1.2.3 applies. Section 1.2.4 does not.","gold_marker":"Section 1.2.3 applies."}
+{"id":"decimal-2","text":"Version 4.5.6 is current. Version 4.5.7 is in beta.","gold_marker":"Version 4.5.6 is current."}
+{"id":"decimal-3","text":"The rate is 3.14 percent annually.","gold_marker":null}
+{"id":"decimal-4","text":"Pi equals 3.14159265 approximately.","gold_marker":null}
+{"id":"price","text":"The book costs $19.99 today.","gold_marker":null}
+{"id":"time-am","text":"The meeting at 9 a.m. ran long. We adjourned by noon.","gold_marker":"a.m. ran long."}
+{"id":"time-pm-1","text":"Mr. Jones arrived at 5 p.m. yesterday.","gold_marker":null}
+{"id":"time-pm-2","text":"By 11 p.m. he was exhausted. He went to bed.","gold_marker":"he was exhausted."}
+{"id":"url-1","text":"Visit www.example.com. The site is great.","gold_marker":"www.example.com."}
+{"id":"url-2","text":"Send mail to user@example.com today.","gold_marker":null}
+{"id":"url-3","text":"Check docs.example.com for updates.","gold_marker":null}
+{"id":"esp-pages","text":"Pages 1-10, esp. p. 5. The argument was clear.","gold_marker":"esp. p. 5."}
+{"id":"vol-citation","text":"See vol. 5, p. 23 of the report.","gold_marker":null}
+{"id":"no-num","text":"Patent No. 1,234,567 was granted.","gold_marker":null}
+{"id":"jr-sr-1","text":"John Smith, Jr. lives next door.","gold_marker":null}
+{"id":"jr-sr-2","text":"John Smith, Sr. retired last year. His son took over.","gold_marker":"retired last year."}
+{"id":"month-abbrev-1","text":"On Jan. 5, 2020, the law passed. It took effect immediately.","gold_marker":"the law passed."}
+{"id":"month-abbrev-2","text":"The deadline is Mar. 31.","gold_marker":null}
+{"id":"day-abbrev","text":"The meeting on Wed. afternoon was canceled.","gold_marker":null}
+{"id":"clean-1","text":"He arrived early. She arrived late. They left together.","gold_marker":"He arrived early.;She arrived late."}
+{"id":"clean-2","text":"The cat sat on the mat. The dog watched.","gold_marker":"the mat."}
+{"id":"clean-3","text":"It rained all day. The streets flooded.","gold_marker":"all day."}
+{"id":"clean-4","text":"She opened the door. A breeze came in.","gold_marker":"the door."}
+{"id":"clean-5","text":"Time passed slowly. Nothing happened.","gold_marker":"slowly."}
+{"id":"clean-q-1","text":"Did he go? Yes, he did. Then he came back.","gold_marker":"Did he go?;Yes, he did."}
+{"id":"clean-q-2","text":"Where are you? I am here.","gold_marker":"Where are you?"}
+{"id":"clean-excl","text":"What a day! I'm exhausted.","gold_marker":"What a day!"}
+{"id":"clean-quoted","text":"\"Stop,\" she said. He stopped.","gold_marker":"she said."}
+{"id":"clean-paren","text":"He left (quietly). Nobody noticed.","gold_marker":"(quietly)."}
+{"id":"clean-long","text":"The committee deliberated for hours over the proposal before reaching a unanimous decision. The chair adjourned the meeting.","gold_marker":"unanimous decision."}
+{"id":"clean-list","text":"He bought milk. She bought bread. They split the cost.","gold_marker":"He bought milk.;She bought bread."}
+{"id":"clean-many","text":"One. Two. Three. Four.","gold_marker":"One.;Two.;Three."}
+{"id":"clean-quote-end","text":"He said, \"Hello.\" She nodded.","gold_marker":"\"Hello.\""}
+{"id":"abbrev-end-1","text":"He bought apples, oranges, pears, etc.","gold_marker":null}
+{"id":"abbrev-end-2","text":"She earned an M.D.","gold_marker":null}
+{"id":"abbrev-end-3","text":"The conference was held at Acme Inc.","gold_marker":null}
+{"id":"long-citation","text":"In Roe v. Wade, 410 U.S. 113 (1973), the Court ruled. The decision was historic.","gold_marker":"410 U.S. 113 (1973),"}
+{"id":"abbrev-comma","text":"After Mr. Smith, the next witness was called.","gold_marker":null}
+{"id":"abbrev-semi","text":"Mr. Adams disagreed; the others nodded.","gold_marker":null}
+{"id":"capital-no-abbrev","text":"He went home. Then he slept.","gold_marker":"home."}
+{"id":"low-after-period","text":"The book ended. then he wrote a sequel.","gold_marker":"ended."}
+{"id":"capital-abbrev","text":"He met St. Augustine in his dreams.","gold_marker":null}
+{"id":"long-abbrev-mix","text":"Dr. Adams, Mr. Brown, Mrs. Cook, and Ms. Diaz attended the gala. They left at midnight.","gold_marker":"attended the gala."}
+{"id":"nested-abbrev","text":"The U.S. v. Lopez decision was important. It changed federalism.","gold_marker":"was important."}
+{"id":"two-abbrevs","text":"Prof. Liu and Dr. Khan published. The paper was peer reviewed.","gold_marker":"published."}
+{"id":"abbrev-quote","text":"\"Dr. Watson,\" he said, \"come here.\" Watson approached.","gold_marker":"\"come here.\""}
+{"id":"clean-num","text":"There were 3 cats. Two were black.","gold_marker":"3 cats."}
+{"id":"abbrev-with-num","text":"Section 5 (cf. Section 7) addresses this. The next section follows.","gold_marker":"addresses this."}

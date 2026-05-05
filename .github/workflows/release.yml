@@ -87,9 +87,6 @@ jobs:
             os: ubuntu-24.04
           - id: linux-aarch64
             os: ubuntu-24.04-arm
-          - id: macos-x86_64
-            os: macos-15-intel
-            delocate_arch: x86_64
           - id: macos-aarch64
             os: macos-15
             delocate_arch: arm64

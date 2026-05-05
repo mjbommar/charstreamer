@@ -36,6 +36,9 @@ struct Args {
     encoded_right: usize,
     count_radius: usize,
     negative_keep_rate: f32,
+    terminal_keep_rate: f32,
+    token_shape_features: bool,
+    threshold_eval: Option<PathBuf>,
     version: String,
 }
 
@@ -55,6 +58,9 @@ impl Args {
         let mut encoded_right = 7_usize;
         let mut count_radius = 24_usize;
         let mut negative_keep_rate = 0.02_f32;
+        let mut terminal_keep_rate = 0.02_f32;
+        let mut token_shape_features = false;
+        let mut threshold_eval: Option<PathBuf> = None;
         let mut version = env!("CARGO_PKG_VERSION").to_owned();
 
         let mut args = env::args().skip(1);
@@ -76,6 +82,11 @@ impl Args {
                 "--encoded-right" => encoded_right = parse_value(&arg, &mut args)?,
                 "--count-radius" => count_radius = parse_value(&arg, &mut args)?,
                 "--negative-keep-rate" => negative_keep_rate = parse_value(&arg, &mut args)?,
+                "--terminal-keep-rate" => terminal_keep_rate = parse_value(&arg, &mut args)?,
+                "--token-shape-features" => token_shape_features = true,
+                "--threshold-eval" => {
+                    threshold_eval = Some(PathBuf::from(value_after(&arg, &mut args)?));
+                }
                 "--version" => version = value_after(&arg, &mut args)?,
                 "--help" | "-h" => {
                     print_help();
@@ -98,6 +109,9 @@ impl Args {
         if !(0.0..=1.0).contains(&negative_keep_rate) {
             return Err("--negative-keep-rate must be between 0 and 1".to_owned());
         }
+        if !(0.0..=1.0).contains(&terminal_keep_rate) {
+            return Err("--terminal-keep-rate must be between 0 and 1".to_owned());
+        }
 
         Ok(Self {
             inputs,
@@ -114,6 +128,9 @@ impl Args {
             encoded_right,
             count_radius,
             negative_keep_rate,
+            terminal_keep_rate,
+            token_shape_features,
+            threshold_eval,
             version,
         })
     }
@@ -153,6 +170,12 @@ Options:\n\
   --encoded-right N      Encoded byte window right width. Default: 7.\n\
   --count-radius N       Directional count feature radius. Default: 24.\n\
   --negative-keep-rate R Keep-rate for negative all-position rows. Default: 0.02.\n\
+  --terminal-keep-rate R Keep-rate for negatives at . ! ? positions. Default: 0.02.\n\
+                         Higher than --negative-keep-rate boosts informative negatives.\n\
+  --token-shape-features Enable structural token-shape features (decimal/abbrev shape).\n\
+  --threshold-eval PATH  Optional held-out JSONL for threshold tuning (recommended for\n\
+                         abbreviation-aware models). When provided, the threshold that\n\
+                         maximizes F1 on this set is used; otherwise the random valid split.\n\
   --version VERSION      Model bundle version. Default: crate version."
     );
 }
@@ -242,6 +265,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         encoded_left: args.encoded_left,
         encoded_right: args.encoded_right,
         count_radius: args.count_radius,
+        token_shape_features: args.token_shape_features,
         ..BurnSentenceFeatureConfig::default()
     };
     let kernel = burn_sentence_kernel(&feature_config);
@@ -255,6 +279,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             input,
             args.max_records,
             args.negative_keep_rate,
+            args.terminal_keep_rate,
             &kernel,
             &mut train,
             &mut valid,
@@ -290,9 +315,46 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut valid_scores = vec![0.0_f32; valid.labels.len()];
     model.predict_into(valid.features.as_view(), &mut valid_scores)?;
 
-    let threshold = args
-        .threshold
-        .unwrap_or_else(|| best_threshold_dense(&valid_scores, &valid.labels));
+    let threshold = match args.threshold {
+        Some(t) => t,
+        None => match &args.threshold_eval {
+            Some(eval_path) => {
+                let mut eval_train = RowSet::new(feature_dim);
+                let mut eval_valid = RowSet::new(feature_dim);
+                let mut eval_stats = ExtractionStats::default();
+                read_input(
+                    eval_path,
+                    None,
+                    1.0,
+                    1.0,
+                    &kernel,
+                    &mut eval_train,
+                    &mut eval_valid,
+                    &mut eval_stats,
+                )?;
+                // Merge train and valid splits — we just want all eval rows.
+                let mut merged = eval_train;
+                for row_idx in 0..eval_valid.labels.len() {
+                    merged.push(
+                        eval_valid.features.as_view().row(row_idx),
+                        eval_valid.labels[row_idx],
+                    );
+                }
+                if merged.labels.is_empty() {
+                    return Err("threshold-eval set is empty".into());
+                }
+                let mut eval_scores = vec![0.0_f32; merged.labels.len()];
+                model.predict_into(merged.features.as_view(), &mut eval_scores)?;
+                eprintln!(
+                    "threshold tuned on eval slice: {} rows, {} positive",
+                    merged.labels.len(),
+                    merged.positives
+                );
+                best_threshold_dense(&eval_scores, &merged.labels)
+            }
+            None => best_threshold_dense(&valid_scores, &valid.labels),
+        },
+    };
     let train_metrics = metrics_from_scores(&train_scores, &train.labels, threshold);
     let valid_metrics = metrics_from_scores(&valid_scores, &valid.labels, threshold);
 
@@ -342,7 +404,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 "validation_rows": valid.labels.len(),
                 "validation_positive_rows": valid.positives,
                 "validation_negative_rows": valid.negatives,
-                "negative_keep_rate": args.negative_keep_rate
+                "negative_keep_rate": args.negative_keep_rate,
+                "terminal_keep_rate": args.terminal_keep_rate
             }
         }
     });
@@ -374,6 +437,7 @@ fn read_input(
     input: &Path,
     max_records: Option<usize>,
     negative_keep_rate: f32,
+    terminal_keep_rate: f32,
     kernel: &impl FeatureKernel<f32>,
     train: &mut RowSet,
     valid: &mut RowSet,
@@ -398,6 +462,7 @@ fn read_input(
             &record,
             stats.records_seen,
             negative_keep_rate,
+            terminal_keep_rate,
             kernel,
             train,
             valid,
@@ -529,6 +594,7 @@ fn extract_record(
     record: &JsonlRecord,
     record_index: usize,
     negative_keep_rate: f32,
+    terminal_keep_rate: f32,
     kernel: &impl FeatureKernel<f32>,
     train: &mut RowSet,
     valid: &mut RowSet,
@@ -571,10 +637,24 @@ fn extract_record(
         train
     };
 
+    let text_bytes = record.text.as_bytes();
     for (row_index, candidate) in candidates.iter().enumerate() {
         let label = u8::from(positives.contains(&candidate.break_end));
-        if label == 0 && !keep_negative(record_index, *candidate, negative_keep_rate) {
-            continue;
+        if label == 0 {
+            let is_terminal_punct = candidate
+                .feature_pos
+                .checked_sub(0)
+                .and_then(|_| text_bytes.get(candidate.feature_pos))
+                .map(|b| matches!(*b, b'.' | b'!' | b'?'))
+                .unwrap_or(false);
+            let keep_rate = if is_terminal_punct {
+                negative_keep_rate.max(terminal_keep_rate)
+            } else {
+                negative_keep_rate
+            };
+            if !keep_negative(record_index, *candidate, keep_rate) {
+                continue;
+            }
         }
         target.push(features.as_view().row(row_index), label);
         stats.candidate_count += 1;

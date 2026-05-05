@@ -1,0 +1,28 @@
+[project]
+name = "charstreamer-abbrev-eval"
+version = "0.1.0"
+description = "F1 regression evaluation for charstreamer's sentence-segmentation model on the canonical abbreviation eval suite."
+readme = "README.md"
+requires-python = ">=3.9"
+authors = [{ name = "Michael Bommarito" }]
+license = "MIT OR Apache-2.0"
+# `charstreamer` is required at runtime to actually evaluate a model, but is
+# imported lazily inside `main()`. The unit tests in `tests/` use a fake
+# segmenter and do NOT need the charstreamer wheel installed. CI installs the
+# wheel separately; users of the CLI install via `pip install charstreamer
+# charstreamer-abbrev-eval`.
+dependencies = []
+
+[project.scripts]
+charstreamer-abbrev-eval = "charstreamer_abbrev_eval:main"
+
+[build-system]
+requires = ["uv_build>=0.11.1,<0.12.0"]
+build-backend = "uv_build"
+
+[dependency-groups]
+dev = ["pytest>=8"]
+
+[tool.uv.build-backend]
+module-root = "src"
+module-name = "charstreamer_abbrev_eval"

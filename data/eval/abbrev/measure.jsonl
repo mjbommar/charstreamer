@@ -1,0 +1,47 @@
+{"id": "abbrev-end-1", "text": "He bought apples, oranges, pears, etc.", "gold_marker": null}
+{"id": "abbrev-end-3", "text": "The conference was held at Acme Inc.", "gold_marker": null}
+{"id": "abbrev-semi", "text": "Mr. Adams disagreed; the others nodded.", "gold_marker": null}
+{"id": "acronym-eu", "text": "The E.U. issued new rules.", "gold_marker": null}
+{"id": "ave-blvd", "text": "The shop on 5th Ave. closed today.", "gold_marker": null}
+{"id": "capital-no-abbrev", "text": "He went home. Then he slept.", "gold_marker": "home."}
+{"id": "cf-citation-2", "text": "Cf. Roe v. Wade for analogous reasoning.", "gold_marker": null}
+{"id": "clean-2", "text": "The cat sat on the mat. The dog watched.", "gold_marker": "the mat."}
+{"id": "clean-4", "text": "She opened the door. A breeze came in.", "gold_marker": "the door."}
+{"id": "clean-excl", "text": "What a day! I'm exhausted.", "gold_marker": "What a day!"}
+{"id": "clean-long", "text": "The committee deliberated for hours over the proposal before reaching a unanimous decision. The chair adjourned the meeting.", "gold_marker": "unanimous decision."}
+{"id": "clean-num", "text": "There were 3 cats. Two were black.", "gold_marker": "3 cats."}
+{"id": "clean-q-1", "text": "Did he go? Yes, he did. Then he came back.", "gold_marker": "Did he go?;Yes, he did."}
+{"id": "clean-quote-end", "text": "He said, \"Hello.\" She nodded.", "gold_marker": "\"Hello.\""}
+{"id": "corp-co-1", "text": "Smith and Co. is a small firm.", "gold_marker": null}
+{"id": "corp-inc-1", "text": "Acme Inc. announced earnings. Shares rose sharply.", "gold_marker": "announced earnings."}
+{"id": "corp-ltd-1", "text": "Globex Ltd. signed the deal yesterday.", "gold_marker": null}
+{"id": "day-abbrev", "text": "The meeting on Wed. afternoon was canceled.", "gold_marker": null}
+{"id": "decimal-2", "text": "Version 4.5.6 is current. Version 4.5.7 is in beta.", "gold_marker": "Version 4.5.6 is current."}
+{"id": "decimal-4", "text": "Pi equals 3.14159265 approximately.", "gold_marker": null}
+{"id": "degree-md", "text": "The new doctor has an M.D. and a Ph.D.", "gold_marker": null}
+{"id": "esp-pages", "text": "Pages 1-10, esp. p. 5. The argument was clear.", "gold_marker": "esp. p. 5."}
+{"id": "etc-end", "text": "He bought apples, oranges, pears, etc.", "gold_marker": null}
+{"id": "id-citation", "text": "See id. at 45. The same rule applies.", "gold_marker": "See id. at 45."}
+{"id": "jr-sr-1", "text": "John Smith, Jr. lives next door.", "gold_marker": null}
+{"id": "long-abbrev-mix", "text": "Dr. Adams, Mr. Brown, Mrs. Cook, and Ms. Diaz attended the gala. They left at midnight.", "gold_marker": "attended the gala."}
+{"id": "low-after-period", "text": "The book ended. then he wrote a sequel.", "gold_marker": "ended."}
+{"id": "month-abbrev-2", "text": "The deadline is Mar. 31.", "gold_marker": null}
+{"id": "no-num", "text": "Patent No. 1,234,567 was granted.", "gold_marker": null}
+{"id": "phd-2", "text": "Her Ph.D. is from MIT.", "gold_marker": null}
+{"id": "see-citation", "text": "See, e.g., the discussion in Smith. The point is well-taken.", "gold_marker": "the discussion in Smith."}
+{"id": "st-louis-2", "text": "They met in St. Paul last summer.", "gold_marker": null}
+{"id": "st-place-1", "text": "She lived at 123 Main St. with her dog.", "gold_marker": null}
+{"id": "time-am", "text": "The meeting at 9 a.m. ran long. We adjourned by noon.", "gold_marker": "a.m. ran long."}
+{"id": "time-pm-2", "text": "By 11 p.m. he was exhausted. He went to bed.", "gold_marker": "he was exhausted."}
+{"id": "title-dr-2", "text": "Dr. Patel reviewed the chart. The diagnosis was clear.", "gold_marker": "the chart."}
+{"id": "title-mr-2", "text": "Mr. Henderson signed the lease.", "gold_marker": null}
+{"id": "title-mrs-2", "text": "Mrs. Allen taught the class for years. Her students adored her.", "gold_marker": "the class for years."}
+{"id": "title-multi-1", "text": "Dr. Smith and Mr. Jones met with Mrs. Brown at 9 a.m. on Tuesday. They discussed the case.", "gold_marker": "on Tuesday."}
+{"id": "title-multi-3", "text": "Dr. Lopez and Dr. Khan disagreed. They argued for hours.", "gold_marker": "disagreed."}
+{"id": "title-prof-2", "text": "Prof. Liu studies climate models.", "gold_marker": null}
+{"id": "two-abbrevs", "text": "Prof. Liu and Dr. Khan published. The paper was peer reviewed.", "gold_marker": "published."}
+{"id": "url-2", "text": "Send mail to user@example.com today.", "gold_marker": null}
+{"id": "us-1", "text": "The U.S. economy is strong.", "gold_marker": null}
+{"id": "us-3", "text": "The U.S. and U.K. signed a treaty. Both governments approved it.", "gold_marker": "signed a treaty."}
+{"id": "vol-citation", "text": "See vol. 5, p. 23 of the report.", "gold_marker": null}
+{"id": "vs-citation", "text": "In Smith v. Jones the court applied a strict rule. The dissent disagreed.", "gold_marker": "a strict rule."}

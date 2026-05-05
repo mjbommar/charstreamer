@@ -1,0 +1,23 @@
+[project]
+name = "charstreamer-abbrev-augment"
+version = "0.1.0"
+description = "Template-based synthetic training data generator for sentence-segmentation models. Pairs with charstreamer's burn sentence trainer."
+readme = "README.md"
+requires-python = ">=3.9"
+authors = [{ name = "Michael Bommarito" }]
+license = "MIT OR Apache-2.0"
+dependencies = []
+
+[project.scripts]
+charstreamer-abbrev-augment = "charstreamer_abbrev_augment:main"
+
+[build-system]
+requires = ["uv_build>=0.11.1,<0.12.0"]
+build-backend = "uv_build"
+
+[dependency-groups]
+dev = ["pytest>=8"]
+
+[tool.uv.build-backend]
+module-root = "src"
+module-name = "charstreamer_abbrev_augment"

@@ -551,6 +551,165 @@ impl FeatureAppender<f32> for BoundaryShapeAppender {
     }
 }
 
+/// Token-shape features around a candidate. Discriminates abbreviation contexts
+/// (e.g. `Mr.`/`Dr.`/`U.S.`/`1.2.3`) from real sentence-ending periods.
+///
+/// All features are purely positional/structural — no abbreviation lists.
+/// Output dim: 12.
+#[derive(Clone, Copy, Debug, Default)]
+pub struct TokenShapeAppender;
+
+impl TokenShapeAppender {
+    #[must_use]
+    pub fn new() -> Self {
+        Self
+    }
+}
+
+const TOKEN_SHAPE_DIM: usize = 12;
+const PREV_ALPHA_CAP: f32 = 16.0;
+const NEXT_ALPHA_CAP: f32 = 16.0;
+const INTERNAL_DOT_CAP: f32 = 4.0;
+
+impl FeatureAppender<f32> for TokenShapeAppender {
+    fn block(&self) -> FeatureBlock {
+        FeatureBlock::new("token_shape", TOKEN_SHAPE_DIM)
+    }
+
+    fn append_into(
+        &self,
+        text: TextBytes<'_>,
+        positions: CandidateSlice<'_>,
+        mut out: FeatureMatrixViewMut<'_, f32>,
+        _scratch: &mut FeatureScratch,
+    ) -> Result<(), FeatureError> {
+        if out.rows != positions.len() || out.cols != TOKEN_SHAPE_DIM {
+            return Err(FeatureError::new(
+                "token-shape appender got a mismatched destination view",
+            ));
+        }
+        let bytes = text.bytes();
+
+        for (row_index, position) in positions.data.iter().enumerate() {
+            let center: usize = position.as_usize().min(bytes.len());
+            let row = out.row_mut(row_index);
+
+            // Center byte and adjacent bytes
+            let cb: Option<u8> = bytes.get(center).copied();
+            let prev_byte: Option<u8> = if center > 0 {
+                bytes.get(center - 1).copied()
+            } else {
+                None
+            };
+            let next_byte: Option<u8> = bytes.get(center + 1).copied();
+            let center_is_period: bool = cb == Some(b'.');
+
+            // Walk back over [a-zA-Z0-9.] from `center` to find the preceding token.
+            // The token ends at `center` (exclusive) and starts where the run begins.
+            let mut tok_start: usize = center;
+            while tok_start > 0 {
+                let b: u8 = bytes[tok_start - 1];
+                if b.is_ascii_alphanumeric() || b == b'.' {
+                    tok_start -= 1;
+                } else {
+                    break;
+                }
+            }
+            let prev_token: &[u8] = &bytes[tok_start..center];
+
+            // Internal period count: dots in prev_token, capped.
+            let internal_dots: f32 = prev_token
+                .iter()
+                .filter(|b: &&u8| **b == b'.')
+                .count()
+                .min(INTERNAL_DOT_CAP as usize) as f32;
+
+            // Alpha length & capitalization stats for prev_token.
+            let prev_alpha_count: usize = prev_token
+                .iter()
+                .filter(|b: &&u8| b.is_ascii_alphabetic())
+                .count();
+            let prev_capital_count: usize = prev_token
+                .iter()
+                .filter(|b: &&u8| b.is_ascii_uppercase())
+                .count();
+            let prev_alpha_clamped: f32 = prev_alpha_count.min(PREV_ALPHA_CAP as usize) as f32;
+            let prev_starts_capital: bool = prev_token
+                .iter()
+                .find(|b: &&u8| b.is_ascii_alphabetic())
+                .map(|b: &u8| b.is_ascii_uppercase())
+                .unwrap_or(false);
+            let prev_capital_ratio: f32 = if prev_alpha_count > 0 {
+                prev_capital_count as f32 / prev_alpha_count as f32
+            } else {
+                0.0
+            };
+
+            // Walk forward over whitespace to find next non-space byte, then count
+            // [a-zA-Z] alpha-run length there.
+            let mut after: usize = if cb.is_some() { center + 1 } else { center };
+            while let Some(b) = bytes.get(after).copied() {
+                if b == b' ' || b == b'\t' {
+                    after += 1;
+                } else {
+                    break;
+                }
+            }
+            // Skip past possible newlines too — but record whether we crossed a newline.
+            let mut crossed_newline: bool = false;
+            while let Some(b) = bytes.get(after).copied() {
+                if b == b'\n' || b == b'\r' {
+                    crossed_newline = true;
+                    after += 1;
+                } else if b == b' ' || b == b'\t' {
+                    after += 1;
+                } else {
+                    break;
+                }
+            }
+            let next_token_start: usize = after;
+            let mut next_alpha_len: usize = 0;
+            while let Some(b) = bytes.get(next_token_start + next_alpha_len).copied() {
+                if b.is_ascii_alphabetic() {
+                    next_alpha_len += 1;
+                } else {
+                    break;
+                }
+            }
+            let next_first_byte: Option<u8> = bytes.get(next_token_start).copied();
+            let next_first_is_upper: bool =
+                next_first_byte.is_some_and(|b: u8| b.is_ascii_uppercase());
+            let next_first_is_lower: bool =
+                next_first_byte.is_some_and(|b: u8| b.is_ascii_lowercase());
+
+            // Decimal pattern: digit-period-digit
+            let digit_before_period: bool =
+                center_is_period && prev_byte.is_some_and(|b: u8| b.is_ascii_digit());
+            let digit_after_period: bool =
+                center_is_period && next_byte.is_some_and(|b: u8| b.is_ascii_digit());
+            let decimal_dot: bool = digit_before_period && digit_after_period;
+
+            // Output features (dim 12).
+            row[0] = bool_to_f32(decimal_dot);
+            row[1] = bool_to_f32(digit_before_period);
+            row[2] = bool_to_f32(digit_after_period);
+            row[3] = internal_dots / INTERNAL_DOT_CAP;
+            row[4] = prev_alpha_clamped / PREV_ALPHA_CAP;
+            row[5] = bool_to_f32(prev_starts_capital);
+            row[6] = prev_capital_ratio;
+            row[7] = (next_alpha_len.min(NEXT_ALPHA_CAP as usize) as f32) / NEXT_ALPHA_CAP;
+            row[8] = bool_to_f32(next_first_is_upper);
+            row[9] = bool_to_f32(next_first_is_lower);
+            row[10] = bool_to_f32(crossed_newline);
+            // Short prev token (1-4 alpha chars) + capital start = abbrev-shape signal
+            row[11] = bool_to_f32(
+                center_is_period && prev_starts_capital && (1..=4).contains(&prev_alpha_count),
+            );
+        }
+        Ok(())
+    }
+}
+
 /// Counts selected bytes over a centered byte window.
 #[derive(Clone, Debug)]
 pub struct SelectedByteCountAppender {
@@ -1423,8 +1582,138 @@ mod tests {
         CompositeFeatureKernel, DirectionalByteClassCountAppender,
         DirectionalUnicodeCategoryCountAppender, DirectionalUnicodeCategoryGroupCountAppender,
         EncodedByteWindowAppender, LineByteNgramHashAppender, LineContextMetricsAppender,
-        SelectedByteCountAppender, UnicodeCategory, UnicodeCategoryGroup,
+        SelectedByteCountAppender, TokenShapeAppender, UnicodeCategory, UnicodeCategoryGroup,
     };
+
+    fn run_token_shape(text: &str, position: usize) -> Vec<f32> {
+        let appender = TokenShapeAppender::new();
+        let dim = appender.block().width;
+        let bytes = TextBytes::from_utf8(text);
+        let positions = charstreamer_core::CandidateSlice {
+            data: &[charstreamer_core::BytePos::from_usize(position)],
+        };
+        let mut matrix = charstreamer_core::FeatureMatrix::<f32>::default();
+        matrix.resize_zeroed(1, dim);
+        let mut scratch = charstreamer_core::FeatureScratch::default();
+        appender
+            .append_into(bytes, positions, matrix.as_view_mut(), &mut scratch)
+            .expect("token-shape extraction should succeed");
+        matrix.data
+    }
+
+    /// Indices into the 12-dim TokenShapeAppender output.
+    /// Mirrors the column order in `TokenShapeAppender::append_into`.
+    const TS_DECIMAL_DOT: usize = 0;
+    const TS_DIGIT_BEFORE: usize = 1;
+    const TS_DIGIT_AFTER: usize = 2;
+    const TS_INTERNAL_DOTS: usize = 3;
+    const TS_PREV_ALPHA: usize = 4;
+    const TS_PREV_STARTS_CAP: usize = 5;
+    const TS_PREV_CAP_RATIO: usize = 6;
+    const TS_NEXT_ALPHA: usize = 7;
+    const TS_NEXT_UPPER: usize = 8;
+    const TS_NEXT_LOWER: usize = 9;
+    const TS_CROSSED_NL: usize = 10;
+    const TS_SHORT_CAP_ABBREV: usize = 11;
+
+    #[test]
+    fn token_shape_block_dimension_is_twelve() {
+        let appender = TokenShapeAppender::new();
+        assert_eq!(appender.block().width, 12);
+        assert_eq!(appender.block().name, "token_shape");
+    }
+
+    #[test]
+    fn token_shape_decimal_dot_fires_between_digits() {
+        // Position of the first `.` in "1.2" is byte 1.
+        let row = run_token_shape("1.2", 1);
+        assert_eq!(row[TS_DECIMAL_DOT], 1.0, "decimal_dot should fire");
+        assert_eq!(row[TS_DIGIT_BEFORE], 1.0);
+        assert_eq!(row[TS_DIGIT_AFTER], 1.0);
+    }
+
+    #[test]
+    fn token_shape_decimal_dot_does_not_fire_at_end_of_sentence() {
+        // "1." with no following digit: digit_before=1, digit_after=0, decimal=0.
+        let row = run_token_shape("End is 1.", 8);
+        assert_eq!(row[TS_DIGIT_BEFORE], 1.0);
+        assert_eq!(row[TS_DIGIT_AFTER], 0.0);
+        assert_eq!(row[TS_DECIMAL_DOT], 0.0);
+    }
+
+    #[test]
+    fn token_shape_short_capital_abbrev_fires_for_mr_dot() {
+        // "Mr." period at byte 2; preceding token "Mr" starts capital, length 2.
+        let row = run_token_shape("Mr. Jones", 2);
+        assert!(row[TS_PREV_STARTS_CAP] > 0.5);
+        assert!((row[TS_PREV_ALPHA] - 2.0 / 16.0).abs() < 1e-6);
+        assert_eq!(row[TS_SHORT_CAP_ABBREV], 1.0);
+        assert_eq!(row[TS_NEXT_UPPER], 1.0);
+    }
+
+    #[test]
+    fn token_shape_short_capital_abbrev_does_not_fire_for_long_word() {
+        // "Sentence." has 8-letter prev token; should not match the 1-4 abbrev shape.
+        let row = run_token_shape("Sentence. Next", 8);
+        assert_eq!(row[TS_SHORT_CAP_ABBREV], 0.0);
+        // prev_alpha == 8/16
+        assert!((row[TS_PREV_ALPHA] - 0.5).abs() < 1e-6);
+    }
+
+    #[test]
+    fn token_shape_internal_dots_count_for_acronym() {
+        // "U.S." trailing period at byte 3. The preceding token (alphanumeric+dot
+        // run) is "U.S" (the trailing "." is the candidate, not part of prev),
+        // so internal_dots = 1, normalized to 0.25.
+        let row = run_token_shape("U.S. is", 3);
+        assert!(
+            (row[TS_INTERNAL_DOTS] - 0.25).abs() < 1e-6,
+            "internal_dots = {}",
+            row[TS_INTERNAL_DOTS]
+        );
+        // The dot at byte 1 (between U and S) gets prev_token = "U" (no dots).
+        let row = run_token_shape("U.S. is", 1);
+        assert_eq!(row[TS_INTERNAL_DOTS], 0.0);
+    }
+
+    #[test]
+    fn token_shape_next_lowercase_signal() {
+        // "St. with" — next token is lowercase "with".
+        let row = run_token_shape("St. with", 2);
+        assert_eq!(row[TS_NEXT_LOWER], 1.0);
+        assert_eq!(row[TS_NEXT_UPPER], 0.0);
+    }
+
+    #[test]
+    fn token_shape_next_alpha_length_is_capped() {
+        // Long next word — clamp at 16/16 = 1.0.
+        let row = run_token_shape("End. ABCDEFGHIJKLMNOPQR end", 3);
+        assert!(row[TS_NEXT_ALPHA] >= 1.0 - 1e-6);
+    }
+
+    #[test]
+    fn token_shape_crossed_newline_after_dot() {
+        let row = run_token_shape("End.\nNext", 3);
+        assert_eq!(row[TS_CROSSED_NL], 1.0);
+    }
+
+    #[test]
+    fn token_shape_no_crash_on_empty_text() {
+        let row = run_token_shape("", 0);
+        assert_eq!(row.len(), 12);
+        // Everything should be zero (no period, no neighbors).
+        for v in row {
+            assert_eq!(v, 0.0);
+        }
+    }
+
+    #[test]
+    fn token_shape_prev_capital_ratio_for_acronym() {
+        // "USA." — prev token "USA", all uppercase.
+        let row = run_token_shape("USA.", 3);
+        assert!((row[TS_PREV_CAP_RATIO] - 1.0).abs() < 1e-6);
+        assert!(row[TS_PREV_STARTS_CAP] > 0.5);
+    }
 
     #[test]
     fn composite_kernel_uses_expected_width() {

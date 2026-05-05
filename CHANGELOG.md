@@ -1,5 +1,64 @@
 # Changelog
 
+## 0.1.5 - Abbreviation-Aware Sentence Model
+
+This release retrains the default sentence-boundary model with structural
+token-shape features and abbreviation-rich synthetic data. The primary fix is
+sharply reduced over-splitting on common abbreviations
+(`Dr.`, `Mr.`, `Mrs.`, `U.S.`, `Cf.`, decimals like `1.2.3`, `a.m.`/`p.m.`,
+month and day abbreviations, `Inc.`/`Ltd.`/`Co.`, `St. Louis`, etc.) while
+preserving recall on plain prose.
+
+Included:
+
+- new `BurnSentenceFeatureConfig.token_shape_features` boolean config (default
+  `false`); when enabled, the kernel adds a 12-dimensional `TokenShapeAppender`
+  block emitting purely positional structural signals (decimal context,
+  preceding-token alpha length and capitalization, internal-period count,
+  next-token shape, paragraph-break crossing). Bundles trained without the flag
+  remain valid and load unchanged.
+- new trainer flags in
+  `crates/charstreamer-segmentation/examples/train_sentence_burn.rs`:
+  - `--token-shape-features` enables the new appender
+  - `--terminal-keep-rate R` controls negative-sample keep rate at `.`/`!`/`?`
+    positions independently from `--negative-keep-rate`
+  - `--threshold-eval PATH` tunes the manifest threshold on a held-out JSONL
+    slice instead of the random validation split
+- new `tools/abbrev-augment/` package: pure-stdlib template-based generator for
+  abbreviation-rich synthetic training data, deterministic given `--seed`,
+  invokable via `python -m charstreamer_abbrev_augment`
+- new `tools/abbrev-eval/` package: F1 regression evaluator for the canonical
+  eval suite, invokable via `python -m charstreamer_abbrev_eval --min-f1 0.90`
+- new `data/eval/abbrev/` canonical evaluation suite: 94 cases covering titles,
+  citations, decimals, addresses, time, acronyms, and plain-prose controls,
+  plus a 47/47 train/measure split for held-out F1 reporting
+- new `data/synthetic/abbrev_augment/abbrev_aug_25k.jsonl` (25k records)
+  generated from the new generator and used in the default-model training mix
+- structural Rust unit tests for `TokenShapeAppender` in
+  `crates/charstreamer-kernels`
+- pytest smoke tests for the two new tool packages
+
+Headline metrics on the held-out abbreviation suite
+(`data/eval/abbrev/measure.jsonl`, 47 cases never used in training or
+threshold tuning):
+
+| | precision | recall | F1 |
+|---|---|---|---|
+| previous default (0.1.4) | 0.467 | 0.969 | 0.625 |
+| new default (0.1.5) | 0.857 | 0.960 | 0.906 |
+
+Plain-prose regression suite (9 cases, no abbreviations): F1 0.976 → 1.000.
+
+Known status:
+
+- the default semantic structure model (`paragraph`, `metadata`, `section`,
+  `list_item`) is unchanged from 0.1.2
+- `dialogue` remains reserved until a balanced training set exists
+- a small number of dense long-abbreviation lists ("Dr. Adams, Mr. Brown,
+  Mrs. Cook, and Ms. Diaz attended...") still produce occasional internal
+  splits; these are tracked as known long-tail cases on
+  `data/eval/abbrev/eval.jsonl`
+
 ## 0.1.4 - Typed Python API
 
 This release adds a typed Python wrapper surface while preserving explicit

@@ -7,7 +7,7 @@ use charstreamer_kernels::{
     AsciiClassAppender, BoundaryShapeAppender, ByteClass, CompositeFeatureKernel,
     DirectionalByteClassCountAppender, DirectionalUnicodeCategoryGroupCountAppender,
     EncodedByteWindowAppender, LineByteCountAppender, LineByteNgramHashAppender,
-    LineContextMetricsAppender, LineShapeMetricsAppender, UnicodeCategoryGroup,
+    LineContextMetricsAppender, LineShapeMetricsAppender, TokenShapeAppender, UnicodeCategoryGroup,
 };
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
@@ -97,6 +97,11 @@ pub struct BurnSentenceFeatureConfig {
     pub count_radius: usize,
     pub feature_dim: usize,
     pub hidden_dim: usize,
+    /// Enable the structural token-shape appender (decimal context, prev-token alpha
+    /// length, internal-period count, etc.). Optional; bundles trained without it
+    /// remain backward compatible.
+    #[serde(default)]
+    pub token_shape_features: bool,
 }
 
 impl Default for BurnSentenceFeatureConfig {
@@ -107,6 +112,7 @@ impl Default for BurnSentenceFeatureConfig {
             count_radius: 64,
             feature_dim: 0,
             hidden_dim: 256,
+            token_shape_features: false,
         }
     }
 }
@@ -545,7 +551,7 @@ fn find_model_file(
 }
 
 pub fn burn_sentence_kernel(config: &BurnSentenceFeatureConfig) -> CompositeFeatureKernel {
-    CompositeFeatureKernel::new(vec![
+    let mut appenders: Vec<Box<dyn charstreamer_core::FeatureAppender<f32> + Send + Sync>> = vec![
         Box::new(EncodedByteWindowAppender::new(ByteWindowSpec::new(
             config.encoded_left,
             config.encoded_right,
@@ -582,7 +588,11 @@ pub fn burn_sentence_kernel(config: &BurnSentenceFeatureConfig) -> CompositeFeat
             "line_structure_counts",
             vec![b'\n', b'#', b'-', b'*', b':', b'"', b'\'', b'<', b'>', b','],
         )),
-    ])
+    ];
+    if config.token_shape_features {
+        appenders.push(Box::new(TokenShapeAppender::new()));
+    }
+    CompositeFeatureKernel::new(appenders)
 }
 
 pub fn burn_structure_kernel(config: &BurnStructureFeatureConfig) -> CompositeFeatureKernel {

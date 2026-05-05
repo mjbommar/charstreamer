@@ -12,7 +12,7 @@ pub use features::{
     DirectionalUnicodeCategoryCountAppender, DirectionalUnicodeCategoryGroupCountAppender,
     EncodedByteWindowAppender, LineByteCountAppender, LineByteNgramHashAppender,
     LineContextMetricsAppender, LineEdgeByteWindowAppender, LineShapeMetricsAppender,
-    SelectedByteCountAppender, UnicodeCategory, UnicodeCategoryGroup,
+    SelectedByteCountAppender, TokenShapeAppender, UnicodeCategory, UnicodeCategoryGroup,
 };
 pub use legacy::{CharBoundaryLegacyAppender, LegacyFeatureTables};
 pub use scanner::{ByteSetScanner, LineStartScanner, StrideScanner, Utf8CharSetScanner};
