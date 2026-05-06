@@ -231,6 +231,65 @@ jobs:
           print(len(annotation["spans"]))
           PY
 
+      - name: Quality gate — abbreviation eval F1 floor
+        if: runner.os == 'Linux' && matrix.id == 'linux-x86_64'
+        shell: bash
+        env:
+          CHARSTREAMER_AUTO_DOWNLOAD: "0"
+        run: |
+          wheel="$(ls dist/charstreamer-*.whl | head -1)"
+          uv run --isolated --with "$wheel" --with ./tools/abbrev-eval python -m charstreamer_abbrev_eval \
+            --suite data/eval/abbrev/eval.jsonl \
+            --min-f1 0.90 \
+            --json
+
+      - name: Quality gate — real-text eval F1 floor
+        if: runner.os == 'Linux' && matrix.id == 'linux-x86_64'
+        shell: bash
+        env:
+          CHARSTREAMER_AUTO_DOWNLOAD: "0"
+        run: |
+          wheel="$(ls dist/charstreamer-*.whl | head -1)"
+          uv run --isolated --with "$wheel" --with ./tools/abbrev-eval python -m charstreamer_abbrev_eval \
+            --suite data/eval/realtext/gold.jsonl \
+            --min-f1 0.90 \
+            --json
+
+      - name: Throughput gate — sentence-only median latency
+        if: runner.os == 'Linux' && matrix.id == 'linux-x86_64'
+        shell: bash
+        env:
+          CHARSTREAMER_AUTO_DOWNLOAD: "0"
+        run: |
+          wheel="$(ls dist/charstreamer-*.whl | head -1)"
+          uv run --isolated --with "$wheel" python - <<'PY'
+          import statistics
+          import time
+          import charstreamer
+
+          # ~5 KB representative document.
+          with open("data/eval/realtext/gold.jsonl") as f:
+              import json
+              text = json.loads(f.readline())["text"][:5000]
+
+          seg = charstreamer.Segmenter(
+              config=charstreamer.SegmenterConfig(
+                  include_sentences=True, include_structure=False, min_span_bytes=1
+              )
+          )
+          # Warmup
+          seg.annotate(text)
+          runs = []
+          for _ in range(30):
+              t0 = time.perf_counter()
+              seg.annotate(text)
+              runs.append(time.perf_counter() - t0)
+          median = statistics.median(runs) * 1000
+          print(f"sentence-only median latency on 5KB doc: {median:.2f} ms")
+          # CI runners are ~2x slower than dev box; allow 5ms ceiling vs 2ms target.
+          assert median < 5.0, f"throughput regression: {median:.2f}ms > 5ms"
+          PY
+
       - name: Upload wheel artifact
         uses: actions/upload-artifact@v7
         with:

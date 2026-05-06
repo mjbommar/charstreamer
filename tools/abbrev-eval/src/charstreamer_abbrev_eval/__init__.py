@@ -42,10 +42,11 @@ def gold_breaks_from_marker(text: str, marker: str | None) -> list[int]:
 
 
 def predicted_breaks(text: str, segmenter: Any) -> list[int]:
-    """Internal sentence-end byte offsets from a charstreamer Segmenter result.
+    """Internal sentence-end *byte* offsets from a charstreamer Segmenter result.
 
     The last span's end is the natural end of text, which is *not* a "break"
-    in our sense — only internal ends count.
+    in our sense — only internal ends count. Uses ``end_byte`` when present
+    (the dict format) so non-ASCII text is comparable to byte-keyed gold.
     """
     annotation = segmenter.annotate(text)
     if hasattr(annotation, "spans"):
@@ -55,18 +56,26 @@ def predicted_breaks(text: str, segmenter: Any) -> list[int]:
     else:
         spans = list(annotation)
 
-    sentence_spans = [
-        sp for sp in spans
-        if (getattr(sp, "label", None) or sp["label"]) == "sentence"
-    ]
-    sentence_spans.sort(
-        key=lambda sp: getattr(sp, "start", None) if hasattr(sp, "start") else sp["start"]
-    )
-    breaks: list[int] = []
-    for sp in sentence_spans[:-1]:  # last span: natural end of text
-        end = getattr(sp, "end", None) if hasattr(sp, "end") else sp["end"]
-        breaks.append(int(end))
-    return breaks
+    def _label(sp):
+        return getattr(sp, "label", None) if hasattr(sp, "label") else sp["label"]
+
+    def _start_byte(sp):
+        if hasattr(sp, "as_byte_tuple"):
+            return sp.as_byte_tuple()[1]
+        if isinstance(sp, Mapping):
+            return int(sp.get("start_byte", sp["start"]))
+        return int(sp["start"])
+
+    def _end_byte(sp):
+        if hasattr(sp, "as_byte_tuple"):
+            return sp.as_byte_tuple()[2]
+        if isinstance(sp, Mapping):
+            return int(sp.get("end_byte", sp["end"]))
+        return int(sp["end"])
+
+    sentence_spans = [sp for sp in spans if _label(sp) == "sentence"]
+    sentence_spans.sort(key=_start_byte)
+    return [_end_byte(sp) for sp in sentence_spans[:-1]]
 
 
 def load_suite(path: str | Path) -> list[dict]:
@@ -77,25 +86,56 @@ def load_suite(path: str | Path) -> list[dict]:
     ]
 
 
+def _normalize_byte(text_bytes: bytes, byte_pos: int) -> int:
+    """Walk back over trailing whitespace so the boundary lands right after
+    the last non-space byte. Lets predictions and labels compare cleanly."""
+    bp = min(byte_pos, len(text_bytes))
+    while bp > 0 and text_bytes[bp - 1] in (0x20, 0x09, 0x0A, 0x0D):
+        bp -= 1
+    return bp
+
+
 def evaluate_segmenter(segmenter: Any, suite: Iterable[dict]) -> dict:
-    """Evaluate a Segmenter against the gold-marker JSONL schema."""
+    """Evaluate a Segmenter against either the gold-marker or the
+    true_breaks/false_breaks schema.
+
+    The marker schema (used by abbrev eval) implies positive boundaries from
+    substring markers; everything else is "negative". The breaks schema (used
+    by the realtext gold in data/eval/realtext/gold.jsonl) explicitly lists
+    both positive and negative byte positions, which is more informative for
+    measuring precision at known false-positive sites.
+    """
     tp = fp = fn = 0
     failures: list[dict] = []
     for case in suite:
         text = case["text"]
-        gold = set(gold_breaks_from_marker(text, case.get("gold_marker")))
-        pred = set(predicted_breaks(text, segmenter))
-        case_tp = len(gold & pred)
-        case_fp = len(pred - gold)
-        case_fn = len(gold - pred)
+        if "true_breaks" in case:
+            text_bytes = text.encode("utf-8")
+            true_set = {_normalize_byte(text_bytes, p) for p in case.get("true_breaks", [])}
+            false_set = {_normalize_byte(text_bytes, p) for p in case.get("false_breaks", [])}
+            pred_raw = set(predicted_breaks(text, segmenter))
+            pred = {_normalize_byte(text_bytes, p) for p in pred_raw}
+            case_tp = len(pred & true_set)
+            case_fp = len(pred & false_set)
+            case_fn = len(true_set - pred)
+            failures_fp = sorted(pred & false_set)
+            failures_fn = sorted(true_set - pred)
+        else:
+            gold = set(gold_breaks_from_marker(text, case.get("gold_marker")))
+            pred = set(predicted_breaks(text, segmenter))
+            case_tp = len(gold & pred)
+            case_fp = len(pred - gold)
+            case_fn = len(gold - pred)
+            failures_fp = sorted(pred - gold)
+            failures_fn = sorted(gold - pred)
         tp += case_tp
         fp += case_fp
         fn += case_fn
-        if case_fp or case_fn:
+        if failures_fp or failures_fn:
             failures.append({
-                "id": case.get("id"),
-                "fp": sorted(pred - gold),
-                "fn": sorted(gold - pred),
+                "id": case.get("id") or case.get("corpus"),
+                "fp": failures_fp,
+                "fn": failures_fn,
             })
     p = tp / (tp + fp) if (tp + fp) else 0.0
     r = tp / (tp + fn) if (tp + fn) else 0.0

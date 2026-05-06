@@ -1,0 +1,23 @@
+[project]
+name = "charstreamer-silver-corpus"
+version = "0.1.0"
+description = "Generate silver-labeled real-world training data for charstreamer's sentence model using nupunkt + a sanity filter."
+readme = "README.md"
+requires-python = ">=3.11"
+authors = [{ name = "Michael Bommarito" }]
+license = "MIT OR Apache-2.0"
+dependencies = ["nupunkt"]
+
+[project.scripts]
+charstreamer-silver-corpus = "charstreamer_silver_corpus:main"
+
+[build-system]
+requires = ["uv_build>=0.11.1,<0.12.0"]
+build-backend = "uv_build"
+
+[dependency-groups]
+dev = ["pytest>=8"]
+
+[tool.uv.build-backend]
+module-root = "src"
+module-name = "charstreamer_silver_corpus"

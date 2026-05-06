@@ -1,5 +1,53 @@
 # Changelog
 
+## 0.1.7 - NMS, Promoted Tooling, CI Quality Gates
+
+This release replaces the sentence segmenter's greedy first-fit cursor advance
+with non-maximum suppression, promotes the silver-corpus generation pipeline
+into a proper tool, ships the real-text held-out gold as a canonical eval
+artifact, and wires both abbreviation and real-text F1 floors plus a
+sentence-only throughput assertion into the release workflow.
+
+Quality is unchanged from 0.1.6 (abbrev F1 0.946, real-text F1 0.945) — NMS is
+correct-by-construction but didn't lift F1 measurably on the existing eval
+because the score distribution at τ=0.55 is already sharp. NMS pays off when
+adjacent terminator candidates are both above threshold, which the current
+training distribution rarely produces. Kept because it's the right algorithm
+and prevents a category of latent regressions.
+
+Included:
+
+- `BurnSentenceSegmenter::sentence_spans` now uses NMS (non-maximum
+  suppression) over candidate clusters defined by overlapping cursor
+  advances. Previously the greedy first-fit could let a low-score candidate
+  at byte N suppress a higher-score candidate at byte N+1 (because cursor
+  advanced past N). NMS picks the highest score in each cluster.
+- new `tools/silver-corpus/` package: pulls latest Federal Register, PMC
+  open-access, and Project Gutenberg text and labels it via nupunkt + a
+  sanity filter that strips nupunkt's known false-positive patterns. Output
+  goes into `data/synthetic/realtext_silver/`. Replaces the in-tree
+  `logs/realtext-experiment/silver_train_data.py` with a parameterized CLI.
+- new `data/eval/realtext/gold.jsonl` (~75 KB): self-contained held-out gold
+  with 4 corpora, 344 hand-labeled `true_breaks`, and 26 hand-labeled
+  `false_breaks`. The `true_breaks/false_breaks` schema is now also
+  understood by `tools/abbrev-eval`.
+- `tools/abbrev-eval` now uses byte offsets correctly for non-ASCII text
+  (previously char offsets were treated as bytes, causing F1 numbers on
+  Pride and Prejudice to be wrong). Schema is auto-detected from the input
+  records.
+- new release-workflow CI gates: abbrev F1 ≥ 0.90 against
+  `data/eval/abbrev/eval.jsonl`, real-text F1 ≥ 0.90 against
+  `data/eval/realtext/gold.jsonl`, and sentence-only median latency < 5 ms
+  on a 5 KB document. Block the release on any failure.
+
+Known status:
+
+- the bundled multi-label structure model is unchanged from 0.1.5; a
+  retrain attempt on the current corpus did not improve macro F1, so the
+  existing model + the cross-dedup priority fix from 0.1.6 is the right
+  configuration for now
+- `dialogue` remains reserved
+
 ## 0.1.6 - Real-Text Generalization and Throughput
 
 This release retrains the default sentence-boundary model on a silver corpus
