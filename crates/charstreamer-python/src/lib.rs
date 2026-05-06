@@ -13,6 +13,8 @@ struct PySegmenterConfig {
     #[pyo3(get, set)]
     include_sentences: bool,
     #[pyo3(get, set)]
+    include_structure: bool,
+    #[pyo3(get, set)]
     min_span_bytes: usize,
 }
 
@@ -21,11 +23,13 @@ impl PySegmenterConfig {
     #[new]
     #[pyo3(signature = (
         include_sentences=true,
+        include_structure=true,
         min_span_bytes=1
     ))]
-    fn new(include_sentences: bool, min_span_bytes: usize) -> Self {
+    fn new(include_sentences: bool, include_structure: bool, min_span_bytes: usize) -> Self {
         Self {
             include_sentences,
+            include_structure,
             min_span_bytes,
         }
     }
@@ -40,6 +44,7 @@ impl From<SegmenterConfig> for PySegmenterConfig {
     fn from(value: SegmenterConfig) -> Self {
         Self {
             include_sentences: value.include_sentences,
+            include_structure: value.include_structure,
             min_span_bytes: value.min_span_bytes,
         }
     }
@@ -49,6 +54,7 @@ impl From<&PySegmenterConfig> for SegmenterConfig {
     fn from(value: &PySegmenterConfig) -> Self {
         Self {
             include_sentences: value.include_sentences,
+            include_structure: value.include_structure,
             min_span_bytes: value.min_span_bytes,
         }
     }

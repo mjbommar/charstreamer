@@ -1,5 +1,64 @@
 # Changelog
 
+## 0.1.6 - Real-Text Generalization and Throughput
+
+This release retrains the default sentence-boundary model on a silver corpus
+derived from real Federal Register, PubMed Central, and Project Gutenberg text
+(via nupunkt + a sanity filter that removes its known false-positive patterns).
+It also fixes a normalization bug that was suppressing legitimate sentence
+boundaries when they crossed structure spans, and ships an inference-time
+candidate filter plus a sentence-only mode that cuts per-document latency by
+more than 100x.
+
+Headline metrics, all measured via the actual wheel:
+
+| | abbrev eval F1 (94 cases) | held-out real-text F1 (370 labeled positions across 4 corpora) |
+|---|---|---|
+| 0.1.5 (previous default) | 0.920 | 0.59 |
+| 0.1.6 | 0.946 | 0.945 |
+
+Throughput on a 4.7 KB Federal Register notice (median over 30 calls):
+
+| | latency | MB/sec |
+|---|---|---|
+| 0.1.5 (previous default) | 60.7 ms | 0.13 |
+| 0.1.6 (full segmentation, default) | 1.92 ms | 2.5 |
+| 0.1.6 (sentence-only mode) | 0.45 ms | 6.1 |
+| nupunkt 0.6.0 (Python reference) | 0.91 ms | 5.1 |
+| nupunkt-rs 0.1.0 (Rust reference) | 0.35 ms | 13.9 |
+
+Included:
+
+- new default sentence-boundary model trained on the union of
+  `data/synthetic/kl3m_streaming_spans_*`, the abbreviation-augmented synthetic
+  corpus from 0.1.5, and a new silver corpus of 202 real-world records
+  (Federal Register + PMC open-access + Project Gutenberg) labeled by nupunkt
+  with a small sanity filter that suppresses its known false-positive patterns
+  (Roman numeral section markers, `Sec.` followed by section numbers,
+  `U.S.` mid-name, enumerated list items, and decimal contexts)
+- new `sentence_terminator_candidates` inference-time pre-filter in
+  `charstreamer-segmentation`. The model still scores every returned candidate;
+  the filter just skips positions where it would always score ~0 (mid-word
+  characters, whitespace, etc.). Drops candidate count from ~950k to ~30k on a
+  1MB English corpus
+- new `SegmenterConfig.include_structure: bool` config (default `true`).
+  Setting it to `false` skips the bundled multi-label structure model entirely;
+  this roughly quarters per-document latency for sentence-only workloads
+- fix: `remove_crossing_spans` now processes sentences first when resolving
+  cross-dedup (sentence wins). Without this fix, structure-model paragraph
+  boundaries that did not align with sentence-model boundaries silently
+  suppressed sentence ends, regressing recall by ~15 pp on real text. The
+  previous test that encoded the broken behavior has been updated to assert
+  the corrected priority
+
+Known status:
+
+- the bundled multi-label structure model (`paragraph`, `metadata`, `section`,
+  `list_item`) is unchanged from 0.1.5; its predictions still occasionally
+  cross sentence boundaries, which is now correctly handled by the dedup fix
+  but would benefit from a structure-model retrain in a follow-up release
+- `dialogue` remains reserved until a balanced training set exists
+
 ## 0.1.5 - Abbreviation-Aware Sentence Model
 
 This release retrains the default sentence-boundary model with structural

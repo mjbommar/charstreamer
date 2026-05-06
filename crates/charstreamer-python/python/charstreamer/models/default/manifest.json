@@ -13,7 +13,7 @@
       "bytes": 57297,
       "path": "sentence_boundary.mpk",
       "role": "sentence_boundary",
-      "sha256": "ea27cb32c436b3f56f9a9abf92b54c73611b76e41b55519676c317364353b513"
+      "sha256": "b93b3a98ccaca99fe30f598b55c815fb97f23b435192352f449d5803bd0f70b6"
     },
     {
       "bytes": 1245550,
@@ -25,24 +25,24 @@
   "format": "charstreamer.model-bundle.v1",
   "metrics": {
     "train": {
-      "accuracy": 0.9928779006004333,
-      "f1": 0.9911505579948425,
-      "false_negatives": 580,
-      "false_positives": 319,
-      "precision": 0.9937036037445068,
-      "recall": 0.9886106848716736,
-      "true_negatives": 74983,
-      "true_positives": 50345
+      "accuracy": 0.994271993637085,
+      "f1": 0.9920024275779724,
+      "false_negatives": 347,
+      "false_positives": 585,
+      "precision": 0.9899806380271912,
+      "recall": 0.9940325617790222,
+      "true_negatives": 103976,
+      "true_positives": 57802
     },
     "validation": {
-      "accuracy": 0.9900451302528381,
-      "f1": 0.9878301620483398,
-      "false_negatives": 195,
-      "false_positives": 116,
-      "precision": 0.9908933639526367,
-      "recall": 0.9847858548164368,
-      "true_negatives": 18308,
-      "true_positives": 12622
+      "accuracy": 0.9916975498199463,
+      "f1": 0.9884757995605469,
+      "false_negatives": 144,
+      "false_positives": 192,
+      "precision": 0.9868510961532593,
+      "recall": 0.9901058077812195,
+      "true_negatives": 25724,
+      "true_positives": 14410
     }
   },
   "name": "charstreamer-default",
@@ -76,7 +76,7 @@
   },
   "task": "combined_segmentation",
   "thresholds": {
-    "sentence.end": 0.8100000023841858
+    "sentence.end": 0.55
   },
   "training": {
     "fit_report": {
@@ -85,25 +85,25 @@
       "epochs": 24,
       "hidden_dim": 128,
       "learning_rate": 0.0008,
-      "rows": 126227,
-      "seed": 17
+      "rows": 162710,
+      "seed": 53
     },
     "stats": {
-      "candidate_count": 157468,
+      "candidate_count": 203180,
       "negative_keep_rate": 0.019999999552965164,
-      "positive_candidate_count": 63742,
-      "records_seen": 35000,
-      "records_used": 35000,
+      "positive_candidate_count": 72703,
+      "records_seen": 35202,
+      "records_used": 35202,
       "records_without_candidates": 0,
       "terminal_keep_rate": 0.10000000149011612,
-      "train_negative_rows": 75302,
-      "train_positive_rows": 50925,
-      "train_rows": 126227,
+      "train_negative_rows": 104561,
+      "train_positive_rows": 58149,
+      "train_rows": 162710,
       "unmatched_positive_boundaries": 0,
-      "validation_negative_rows": 18424,
-      "validation_positive_rows": 12817,
-      "validation_rows": 31241
+      "validation_negative_rows": 25916,
+      "validation_positive_rows": 14554,
+      "validation_rows": 40470
     }
   },
-  "version": "0.1.5"
+  "version": "0.1.6"
 }
